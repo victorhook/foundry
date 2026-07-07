@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local secrets / deploy config (never commit)
+.env
+.env.*
+!.env.example
+.deploy.env
+
+# Editors
+.idea/

@@ -1,0 +1,8 @@
+# /etc/caddy/Caddyfile
+# Replace fitness.yourdomain.com with your real subdomain.
+# Caddy automatically obtains + renews a Let's Encrypt certificate.
+
+fitness.yourdomain.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}

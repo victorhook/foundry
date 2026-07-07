@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Runs before every `git push`. Fast gate: unit tests + build.
+# (Full e2e runs in CI and via `make test`.) Bypass once with `git push --no-verify`.
+set -e
+echo "pre-push: unit tests + build…"
+cd "$(git rev-parse --show-toplevel)/app"
+npm run test:unit
+npm run build
+echo "pre-push: ok"
