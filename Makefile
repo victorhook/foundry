@@ -5,7 +5,7 @@
 .PHONY: help setup dev test test-unit test-e2e check push deploy release
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 	  awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 setup: ## One-time: install deps and enable git hooks
@@ -32,5 +32,7 @@ push: ## Run fast checks, then push the current branch
 	cd app && npm run test:unit && npm run build
 	git push
 
-deploy release: ## Test, build, ship to the VPS, tag the release
+deploy: ## Test, build, ship to the VPS, tag the release
 	./scripts/deploy.sh
+
+release: deploy ## Alias for deploy
