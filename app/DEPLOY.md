@@ -92,6 +92,22 @@ kept locally and syncs when you save).
 
 Rebuild locally, rsync `build/` up again, then `sudo systemctl restart logbook`.
 
+## Managing the login
+
+The first user is created automatically from `ADMIN_USER`/`ADMIN_PASSWORD` in
+`.env` the first time the app starts with an empty database.
+
+To change the password or add another user later — without touching your data:
+
+```bash
+cd /opt/logbook
+sudo -u logbook DATABASE_PATH=/opt/logbook/data/logbook.db \
+  node scripts/set-user.mjs <username> <new-password>
+```
+
+Sessions are stateless, so a password change takes effect immediately (existing
+sessions keep working until they expire; restart the service to invalidate them).
+
 ## Schema changes / migrations
 
 Schema evolves via a built-in runner (SQLite `user_version`) in `src/lib/server/db.ts`.

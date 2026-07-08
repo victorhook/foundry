@@ -47,7 +47,7 @@ fi
 # 3. Ship.
 echo "▶ Shipping build to $SSH_TARGET:$DEPLOY_PATH …"
 rsync -az --delete -e ssh app/build "$SSH_TARGET:$DEPLOY_PATH/"
-rsync -az -e ssh app/package.json app/package-lock.json app/deploy "$SSH_TARGET:$DEPLOY_PATH/"
+rsync -az -e ssh app/package.json app/package-lock.json app/deploy app/scripts "$SSH_TARGET:$DEPLOY_PATH/"
 
 # 4 + 5. Install prod deps (rebuilds native modules) and restart.
 echo "▶ Installing deps and restarting '$SERVICE' …"
