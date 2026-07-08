@@ -1,8 +1,20 @@
 import crypto from 'node:crypto';
 import { env } from '$env/dynamic/private';
 
-// A dev fallback keeps local runs working; production MUST set AUTH_SECRET.
-const SECRET = env.AUTH_SECRET || 'dev-insecure-secret-change-me';
+// A dev fallback keeps local runs working; production MUST set a real AUTH_SECRET.
+const DEV_FALLBACK_SECRET = 'dev-insecure-secret-change-me';
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+// Fail loud rather than run on a publicly-known secret (which would let anyone
+// forge session cookies).
+if (IS_PROD && (!env.AUTH_SECRET || env.AUTH_SECRET === DEV_FALLBACK_SECRET)) {
+	throw new Error(
+		'AUTH_SECRET must be set to a unique value in production ' +
+			'(generate one with `openssl rand -hex 32`). Refusing to start on the insecure dev fallback.'
+	);
+}
+
+const SECRET = env.AUTH_SECRET || DEV_FALLBACK_SECRET;
 const SESSION_DAYS = 30;
 
 export const SESSION_COOKIE = 'session';

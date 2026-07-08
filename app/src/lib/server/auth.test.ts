@@ -1,10 +1,31 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
 	hashPassword,
 	verifyPassword,
 	createSession,
 	verifySession
 } from './auth';
+
+describe('production AUTH_SECRET guard', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.resetModules();
+	});
+
+	it('refuses to start in production without AUTH_SECRET', async () => {
+		vi.resetModules();
+		vi.stubEnv('NODE_ENV', 'production');
+		vi.stubEnv('AUTH_SECRET', '');
+		await expect(import('./auth')).rejects.toThrow(/AUTH_SECRET/);
+	});
+
+	it('starts in production when AUTH_SECRET is set', async () => {
+		vi.resetModules();
+		vi.stubEnv('NODE_ENV', 'production');
+		vi.stubEnv('AUTH_SECRET', 'a-real-unique-secret');
+		await expect(import('./auth')).resolves.toBeDefined();
+	});
+});
 
 describe('password hashing', () => {
 	it('verifies the correct password', () => {

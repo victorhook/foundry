@@ -116,11 +116,18 @@ function seed() {
 	}
 	// Single user from env, created once.
 	const userCount = (db.prepare('SELECT COUNT(*) AS n FROM user').get() as { n: number }).n;
-	if (userCount === 0 && env.ADMIN_USER && env.ADMIN_PASSWORD) {
-		db.prepare('INSERT INTO user (username, password_hash) VALUES (?, ?)').run(
-			env.ADMIN_USER,
-			hashPassword(env.ADMIN_PASSWORD)
-		);
+	if (userCount === 0) {
+		if (env.ADMIN_USER && env.ADMIN_PASSWORD) {
+			db.prepare('INSERT INTO user (username, password_hash) VALUES (?, ?)').run(
+				env.ADMIN_USER,
+				hashPassword(env.ADMIN_PASSWORD)
+			);
+		} else if (process.env.NODE_ENV === 'production') {
+			throw new Error(
+				'No user exists yet and ADMIN_USER/ADMIN_PASSWORD are not set. ' +
+					'Set them in .env so the initial login can be created.'
+			);
+		}
 	}
 }
 seed();
