@@ -20,6 +20,17 @@ const SESSION_DAYS = 30;
 export const SESSION_COOKIE = 'session';
 export const SESSION_MAX_AGE = SESSION_DAYS * 24 * 60 * 60;
 
+/** Cookie options shared by login and the rolling-refresh hook. */
+export function sessionCookieOptions(secure: boolean) {
+	return {
+		path: '/' as const,
+		httpOnly: true,
+		sameSite: 'lax' as const,
+		secure,
+		maxAge: SESSION_MAX_AGE
+	};
+}
+
 /** scrypt password hash, stored as `salt:hash` (both hex). */
 export function hashPassword(password: string): string {
 	const salt = crypto.randomBytes(16).toString('hex');

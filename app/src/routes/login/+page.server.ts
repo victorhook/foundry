@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import { getUserByName } from '$lib/server/db';
-import { createSession, verifyPassword, SESSION_COOKIE, SESSION_MAX_AGE } from '$lib/server/auth';
+import { createSession, verifyPassword, SESSION_COOKIE, sessionCookieOptions } from '$lib/server/auth';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -22,13 +22,7 @@ export const actions: Actions = {
 			return fail(400, { error: 'Wrong username or password', username });
 		}
 
-		cookies.set(SESSION_COOKIE, createSession(user.id), {
-			path: '/',
-			httpOnly: true,
-			sameSite: 'lax',
-			secure: !dev,
-			maxAge: SESSION_MAX_AGE
-		});
+		cookies.set(SESSION_COOKIE, createSession(user.id), sessionCookieOptions(!dev));
 		throw redirect(303, '/');
 	}
 };
