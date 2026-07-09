@@ -4,6 +4,6 @@ Description=Foundry SQLite backup
 
 [Service]
 Type=oneshot
-User=foundry
+User=victor
 EnvironmentFile=/opt/foundry/.env
 ExecStart=/opt/foundry/deploy/backup.sh
