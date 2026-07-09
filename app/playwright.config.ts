@@ -23,7 +23,7 @@ export default defineConfig({
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,
 		env: {
-			DATABASE_PATH: '.e2e-data/logbook.db',
+			DATABASE_PATH: '.e2e-data/foundry.db',
 			AUTH_SECRET: 'e2e-secret',
 			ADMIN_USER: 'e2e',
 			ADMIN_PASSWORD: 'e2e-pass'

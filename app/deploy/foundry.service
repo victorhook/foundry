@@ -1,16 +1,16 @@
-# /etc/systemd/system/logbook.service
+# /etc/systemd/system/foundry.service
 [Unit]
-Description=Logbook workout tracker
+Description=Foundry — personal workout tracker
 After=network.target
 
 [Service]
 Type=simple
-User=logbook
-WorkingDirectory=/opt/logbook
+User=foundry
+WorkingDirectory=/opt/foundry
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOST=127.0.0.1
-EnvironmentFile=/opt/logbook/.env
+EnvironmentFile=/opt/foundry/.env
 ExecStart=/usr/bin/node build
 Restart=always
 RestartSec=3

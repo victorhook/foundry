@@ -10,7 +10,7 @@
 import { build, files, version } from '$service-worker';
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
-const CACHE = `logbook-${version}`;
+const CACHE = `foundry-${version}`;
 const PRECACHE = [...build, ...files];
 
 sw.addEventListener('install', (event) => {

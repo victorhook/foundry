@@ -1,6 +1,6 @@
 {
-	"name": "Logbook",
-	"short_name": "Logbook",
+	"name": "Foundry",
+	"short_name": "Foundry",
 	"description": "Personal workout tracker",
 	"start_url": "/",
 	"scope": "/",

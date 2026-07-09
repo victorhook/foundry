@@ -1,0 +1,9 @@
+# /etc/systemd/system/foundry-backup.service
+[Unit]
+Description=Foundry SQLite backup
+
+[Service]
+Type=oneshot
+User=foundry
+EnvironmentFile=/opt/foundry/.env
+ExecStart=/opt/foundry/deploy/backup.sh

@@ -1,9 +1,0 @@
-# /etc/systemd/system/logbook-backup.service
-[Unit]
-Description=Logbook SQLite backup
-
-[Service]
-Type=oneshot
-User=logbook
-EnvironmentFile=/opt/logbook/.env
-ExecStart=/opt/logbook/deploy/backup.sh

@@ -4,8 +4,8 @@
 //   node scripts/set-user.mjs <username> <password>
 //
 // Uses the same scrypt hash format as the app (salt:hash, hex, keylen 64).
-// Honors DATABASE_PATH (defaults to data/logbook.db), so on the server run:
-//   DATABASE_PATH=/opt/logbook/data/logbook.db node scripts/set-user.mjs <user> <pass>
+// Honors DATABASE_PATH (defaults to data/foundry.db), so on the server run:
+//   DATABASE_PATH=/opt/foundry/data/foundry.db node scripts/set-user.mjs <user> <pass>
 import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
 
@@ -21,7 +21,7 @@ function hashPassword(pw) {
 	return `${salt}:${hash}`;
 }
 
-const dbPath = process.env.DATABASE_PATH || 'data/logbook.db';
+const dbPath = process.env.DATABASE_PATH || 'data/foundry.db';
 const db = new Database(dbPath);
 db.exec(
 	`CREATE TABLE IF NOT EXISTS user (

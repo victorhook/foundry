@@ -25,7 +25,7 @@ set +a
 : "${DEPLOY_USER:?set DEPLOY_USER in .deploy.env}"
 : "${DEPLOY_PATH:?set DEPLOY_PATH in .deploy.env}"
 SSH_TARGET="$DEPLOY_USER@$DEPLOY_HOST"
-SERVICE="${DEPLOY_SERVICE:-logbook}"
+SERVICE="${DEPLOY_SERVICE:-foundry}"
 
 # 1. Clean tree — deploy only what's committed.
 if [ -n "$(git status --porcelain)" ]; then

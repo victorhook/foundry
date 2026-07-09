@@ -1,4 +1,4 @@
-# Logbook
+# Foundry
 
 A personal workout tracker — phone-first PWA, self-hosted. Log gym sessions
 (exercise checklist), cardio (bike/run/walk), how it felt (effort, energy),

@@ -1,6 +1,6 @@
-# /etc/systemd/system/logbook-backup.timer
+# /etc/systemd/system/foundry-backup.timer
 [Unit]
-Description=Nightly Logbook backup
+Description=Nightly Foundry backup
 
 [Timer]
 OnCalendar=*-*-* 03:30:00

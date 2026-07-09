@@ -29,7 +29,7 @@ unit tests, build, and e2e. Merge when it's green.
 ## Releasing to production
 
 One-time: copy `.deploy.env.example` → `.deploy.env` and fill in your VPS details.
-The `DEPLOY_USER` needs passwordless sudo for `systemctl restart logbook` (add a
+The `DEPLOY_USER` needs passwordless sudo for `systemctl restart foundry` (add a
 sudoers line for just that command).
 
 Then, from a clean `main`:
@@ -50,7 +50,7 @@ a DB backup (see `app/DEPLOY.md`).
 This repo has no remote yet. Create an empty repo on GitHub, then:
 
 ```bash
-git remote add origin git@github.com:<you>/logbook.git
+git remote add origin git@github.com:<you>/foundry.git
 git push -u origin main
 ```
 

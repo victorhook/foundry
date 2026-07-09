@@ -4,7 +4,7 @@
 // session + current view so an accidental refresh at the gym isn't lost.
 
 /* ============ Constants ============ */
-const STORAGE_KEY = "logbook_draft";
+const STORAGE_KEY = "foundry_draft";
 const WEIGHT_STEP = 2.5;
 const REPS_STEP = 1;
 const DURATION_STEP = 1;   // minutes
@@ -413,7 +413,7 @@ function render() {
 function header(opts) {
   const left = opts.back
     ? `<button class="back-btn" data-act="${opts.back}">‹ ${opts.backLabel || "Back"}</button>`
-    : `<div class="wordmark">log<span>book</span></div>`;
+    : `<div class="wordmark">found<span>ry</span></div>`;
   let right = "";
   if (opts.dateLabel) {
     right = `<div class="timer">📅 ${opts.dateLabel}</div>`;

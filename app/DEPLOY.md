@@ -1,4 +1,4 @@
-# Deploying Logbook to your VPS
+# Deploying Foundry to your VPS
 
 The app is a SvelteKit server (adapter-node) + a SQLite file. It runs behind
 Caddy, which gives it automatic HTTPS. HTTPS is what makes the phone install work.
@@ -24,42 +24,42 @@ npm install
 npm run build                      # -> ./build (the Node server)
 
 # Copy the pieces the server needs
-sudo mkdir -p /opt/logbook
-# via ssh, e.g. rsync -e ssh build package.json package-lock.json deploy user@vps:/opt/logbook/
-rsync -av --delete build package.json package-lock.json deploy /opt/logbook/
+sudo mkdir -p /opt/foundry
+# via ssh, e.g. rsync -e ssh build package.json package-lock.json deploy user@vps:/opt/foundry/
+rsync -av --delete build package.json package-lock.json deploy /opt/foundry/
 ```
 
 On the VPS, install production deps (this rebuilds better-sqlite3 natively):
 
 ```bash
-cd /opt/logbook && npm install --omit=dev
+cd /opt/foundry && npm install --omit=dev
 ```
 
 ## 3. Configure secrets
 
-Create `/opt/logbook/.env` (see `.env.example`):
+Create `/opt/foundry/.env` (see `.env.example`):
 
 ```
 AUTH_SECRET=<long random string>       # e.g. `openssl rand -hex 32`
 ADMIN_USER=<your login>
 ADMIN_PASSWORD=<your password>
-DATABASE_PATH=/opt/logbook/data/logbook.db
+DATABASE_PATH=/opt/foundry/data/foundry.db
 ```
 
 Create a service user so it doesn't run as root:
 
 ```bash
-sudo useradd --system --home /opt/logbook logbook
-sudo chown -R logbook:logbook /opt/logbook
+sudo useradd --system --home /opt/foundry foundry
+sudo chown -R foundry:foundry /opt/foundry
 ```
 
 ## 4. Run as a service
 
 ```bash
-sudo cp /opt/logbook/deploy/logbook.service /etc/systemd/system/
+sudo cp /opt/foundry/deploy/foundry.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now logbook
-sudo systemctl status logbook          # should be active (running)
+sudo systemctl enable --now foundry
+sudo systemctl status foundry          # should be active (running)
 ```
 
 (The single user is created from ADMIN_USER/ADMIN_PASSWORD the first time it starts.)
@@ -90,7 +90,7 @@ kept locally and syncs when you save).
 
 ## Updating later
 
-Rebuild locally, rsync `build/` up again, then `sudo systemctl restart logbook`.
+Rebuild locally, rsync `build/` up again, then `sudo systemctl restart foundry`.
 
 ## Managing the login
 
@@ -100,8 +100,8 @@ The first user is created automatically from `ADMIN_USER`/`ADMIN_PASSWORD` in
 To change the password or add another user later — without touching your data:
 
 ```bash
-cd /opt/logbook
-sudo -u logbook DATABASE_PATH=/opt/logbook/data/logbook.db \
+cd /opt/foundry
+sudo -u foundry DATABASE_PATH=/opt/foundry/data/foundry.db \
   node scripts/set-user.mjs <username> <new-password>
 ```
 
@@ -112,7 +112,7 @@ sessions keep working until they expire; restart the service to invalidate them)
 
 Schema evolves via a built-in runner (SQLite `user_version`) in `src/lib/server/db.ts`.
 When a new feature needs a schema change, a migration is appended there; it applies
-automatically on the next `systemctl restart logbook`. No manual DB steps, and it's
+automatically on the next `systemctl restart foundry`. No manual DB steps, and it's
 safe on both fresh and existing databases.
 
 ## Backups (nightly, 30-day retention)
@@ -121,26 +121,26 @@ The whole database is one file, but never plain-`cp` it while the app runs (WAL 
 Use the included online-backup script + systemd timer:
 
 ```bash
-# scripts came up in step 2 under /opt/logbook/deploy
-sudo cp /opt/logbook/deploy/logbook-backup.service /etc/systemd/system/
-sudo cp /opt/logbook/deploy/logbook-backup.timer /etc/systemd/system/
+# scripts came up in step 2 under /opt/foundry/deploy
+sudo cp /opt/foundry/deploy/foundry-backup.service /etc/systemd/system/
+sudo cp /opt/foundry/deploy/foundry-backup.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now logbook-backup.timer
+sudo systemctl enable --now foundry-backup.timer
 
 # verify
-sudo systemctl list-timers logbook-backup.timer
-sudo systemctl start logbook-backup.service   # run one now
-ls -la /opt/logbook/backups
+sudo systemctl list-timers foundry-backup.timer
+sudo systemctl start foundry-backup.service   # run one now
+ls -la /opt/foundry/backups
 ```
 
-This writes `/opt/logbook/backups/logbook-<date>.db` at 03:30 nightly and deletes
+This writes `/opt/foundry/backups/foundry-<date>.db` at 03:30 nightly and deletes
 copies older than 30 days (tune via `BACKUP_KEEP_DAYS` in `.env`).
 
 ### Restore
 
 ```bash
-sudo systemctl stop logbook
-sudo -u logbook cp /opt/logbook/backups/logbook-<date>.db /opt/logbook/data/logbook.db
-sudo rm -f /opt/logbook/data/logbook.db-wal /opt/logbook/data/logbook.db-shm
-sudo systemctl start logbook
+sudo systemctl stop foundry
+sudo -u foundry cp /opt/foundry/backups/foundry-<date>.db /opt/foundry/data/foundry.db
+sudo rm -f /opt/foundry/data/foundry.db-wal /opt/foundry/data/foundry.db-shm
+sudo systemctl start foundry
 ```

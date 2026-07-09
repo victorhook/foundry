@@ -4,7 +4,7 @@ import path from 'node:path';
 import { env } from '$env/dynamic/private';
 import { hashPassword } from './auth';
 
-const DB_PATH = env.DATABASE_PATH || 'data/logbook.db';
+const DB_PATH = env.DATABASE_PATH || 'data/foundry.db';
 
 // Cardio activities back the Bike/Run/Walk/Interval categories and are hidden
 // from the gym picker. The gym library starts empty (user builds it).

@@ -4,11 +4,11 @@
 	let { form } = $props();
 </script>
 
-<svelte:head><title>Sign in — Logbook</title></svelte:head>
+<svelte:head><title>Sign in — Foundry</title></svelte:head>
 
 <div class="login-wrap">
 	<div class="login-card">
-		<div class="wordmark">log<span>book</span></div>
+		<div class="wordmark">found<span>ry</span></div>
 		<form method="POST" use:enhance>
 			<input
 				class="login-input"

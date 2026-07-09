@@ -1,4 +1,4 @@
-# Logbook — developer workflow
+# Foundry — developer workflow
 # Run `make help` for the list.
 
 .DEFAULT_GOAL := help
