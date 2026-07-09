@@ -13,3 +13,6 @@ Thumbs.db
 
 # Editors
 .idea/
+
+# Saved Claude Code session transcripts (local only)
+.session-archive/
