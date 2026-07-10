@@ -274,6 +274,49 @@
     border-radius: 10px; color: var(--text); padding: 11px 12px; font-size: 0.92rem;
   }
 
+  /* Editable exercise name + tags */
+  .ex-head { flex-wrap: wrap; }
+  .ex-name-edit {
+    background: none; border: none; text-align: left; padding: 0;
+    font-weight: 700; font-size: 1.05rem; color: var(--text);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .ex-name-edit .edit-hint { color: var(--muted-2); font-size: 0.85rem; }
+  .ex-name-edit:active { color: var(--accent); }
+  .ex-tags { display: flex; flex-wrap: wrap; gap: 5px; flex-basis: 100%; order: 3; }
+  .ex-tags .ex-tag {
+    font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); background: var(--surface-2);
+    padding: 3px 8px; border-radius: 6px; font-weight: 700;
+  }
+
+  /* Paced cardio (walk): centered time + pace + estimated distance */
+  .cardio-paced {
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+    padding: 16px; border-top: 1px solid var(--line);
+  }
+  .cardio-paced .set-fields { width: 100%; }
+  .est-dist {
+    font-size: 0.85rem; color: var(--muted);
+    font-variant-numeric: tabular-nums; font-weight: 600;
+  }
+
+  /* Inline "type a name + Add" (replaces prompt dialogs) */
+  .inline-new { display: inline-flex; align-items: center; gap: 6px; }
+  .inline-new-input {
+    background: var(--surface-2); border: 1px solid var(--accent);
+    border-radius: 999px; color: var(--text);
+    padding: 7px 13px; font-size: 0.8rem; max-width: 130px;
+  }
+
+  /* Clearly-visible Discard control */
+  .discard-btn {
+    color: var(--hot); font-weight: 700; font-size: 0.82rem;
+    border: 1px solid var(--hot); border-radius: 999px;
+    padding: 6px 14px; background: transparent;
+  }
+  .discard-btn:active { background: var(--hot); color: #14171C; }
+
   .add-ex-btn {
     width: 100%; padding: 16px; border-radius: var(--radius);
     border: 1px dashed var(--line); color: var(--text);

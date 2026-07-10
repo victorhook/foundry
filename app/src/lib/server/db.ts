@@ -15,6 +15,7 @@ const SEED_EXERCISES = [
 	{ id: 'bike_int', name: 'Bike Intervals', type: 'cardio', muscle: 'Cardio' }
 ];
 const SEED_PAIN_CATEGORIES = ['Lower back', 'Knees', 'Shoulders', 'Elbows', 'Wrists', 'Hips', 'Neck'];
+const SEED_MUSCLE_GROUPS = ['Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Glutes', 'Core', 'Calves'];
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 export const db = new Database(DB_PATH);
@@ -77,7 +78,23 @@ db.exec(`
 //   (d) => d.exec('ALTER TABLE workout ADD COLUMN bodyweight REAL')
 const BASELINE_VERSION = 1;
 const migrations: Array<(d: Database.Database) => void> = [
-	// (future schema changes go here)
+	// v1 -> v2: per-set reps + weight for strength exercises.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS workout_set (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			entry_id TEXT NOT NULL REFERENCES workout_entry(id) ON DELETE CASCADE,
+			ord INTEGER NOT NULL,
+			reps INTEGER,
+			weight REAL
+		)`),
+	// v2 -> v3: reusable tag / muscle-group "data bank".
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS muscle_group (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL
+		)`),
+	// v3 -> v4: walk pace ("normal"/"fast") stored on the cardio entry.
+	(d) => d.exec('ALTER TABLE workout_entry ADD COLUMN pace TEXT')
 ];
 
 function migrate() {
@@ -114,6 +131,13 @@ function seed() {
 			insPain.run(name);
 		}
 	}
+	const mgCount = (db.prepare('SELECT COUNT(*) AS n FROM muscle_group').get() as { n: number }).n;
+	if (mgCount === 0) {
+		const insMg = db.prepare('INSERT OR IGNORE INTO muscle_group (name) VALUES (?)');
+		for (const name of SEED_MUSCLE_GROUPS) {
+			insMg.run(name);
+		}
+	}
 	// Single user from env, created once.
 	const userCount = (db.prepare('SELECT COUNT(*) AS n FROM user').get() as { n: number }).n;
 	if (userCount === 0) {
@@ -140,16 +164,37 @@ export function getUserByName(username: string) {
 }
 
 // --- Data queries ---
+// `muscle` is stored as a comma-separated list; exposed as a `muscles` array (tags).
+function splitMuscles(s: string | null): string[] {
+	return (s || '')
+		.split(',')
+		.map((x) => x.trim())
+		.filter(Boolean);
+}
+
 export function getExercises() {
 	return db
 		.prepare('SELECT id, name, type, muscle, custom FROM exercise ORDER BY name')
 		.all()
-		.map((r: any) => ({ ...r, custom: !!r.custom }));
+		.map((r: any) => ({
+			id: r.id,
+			name: r.name,
+			type: r.type,
+			muscles: splitMuscles(r.muscle),
+			custom: !!r.custom
+		}));
 }
 
 export function getPainCategories(): string[] {
 	return db
 		.prepare('SELECT name FROM pain_category ORDER BY id')
+		.all()
+		.map((r: any) => r.name);
+}
+
+export function getMuscleGroups(): string[] {
+	return db
+		.prepare('SELECT name FROM muscle_group ORDER BY name')
 		.all()
 		.map((r: any) => r.name);
 }
@@ -162,10 +207,23 @@ export function getWorkouts() {
 		.prepare('SELECT * FROM workout_entry ORDER BY ord')
 		.all() as any[];
 	const pains = db.prepare('SELECT workout_id, cat, level FROM workout_pain').all() as any[];
+	const strengthSets = db
+		.prepare('SELECT entry_id, reps, weight FROM workout_set ORDER BY ord')
+		.all() as any[];
+
+	const setsByEntry: Record<string, any[]> = {};
+	for (const s of strengthSets) {
+		(setsByEntry[s.entry_id] ||= []).push({ reps: s.reps, weight: s.weight });
+	}
 
 	const entriesByWorkout: Record<string, any[]> = {};
 	for (const e of entries) {
-		const sets = e.duration != null || e.distance != null ? [{ duration: e.duration, distance: e.distance }] : [];
+		// Strength: sets come from workout_set. Cardio: a single duration/distance
+		// (+ optional pace) lives on the entry row.
+		let sets: any[] = setsByEntry[e.id] || [];
+		if (!sets.length && (e.duration != null || e.distance != null || e.pace)) {
+			sets = [{ duration: e.duration, distance: e.distance, pace: e.pace || null }];
+		}
 		(entriesByWorkout[e.workout_id] ||= []).push({
 			exerciseId: e.exercise_id,
 			sets,
@@ -191,7 +249,12 @@ export function getWorkouts() {
 }
 
 export function getAllData() {
-	return { exercises: getExercises(), painCategories: getPainCategories(), workouts: getWorkouts() };
+	return {
+		exercises: getExercises(),
+		painCategories: getPainCategories(),
+		muscleGroups: getMuscleGroups(),
+		workouts: getWorkouts()
+	};
 }
 
 // --- Mutations ---
@@ -199,12 +262,32 @@ function uid() {
 	return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
 }
 
-export function createExercise(name: string, muscle: string) {
+// Any tags on an exercise are folded into the reusable data bank.
+function rememberMuscles(muscles: string[]) {
+	const ins = db.prepare('INSERT OR IGNORE INTO muscle_group (name) VALUES (?)');
+	for (const m of muscles) {
+		if (m) {
+			ins.run(m);
+		}
+	}
+}
+
+export function createExercise(name: string, muscles: string[]) {
 	const id = uid();
+	const clean = muscles.map((m) => m.trim()).filter(Boolean);
 	db.prepare(
 		'INSERT INTO exercise (id, name, type, muscle, custom, created_at) VALUES (?, ?, ?, ?, 1, ?)'
-	).run(id, name, 'strength', muscle, Date.now());
-	return { id, name, type: 'strength', muscle, custom: true };
+	).run(id, name, 'strength', clean.join(','), Date.now());
+	rememberMuscles(clean);
+	return { id, name, type: 'strength', muscles: clean, custom: true };
+}
+
+export function updateExercise(id: string, name: string, muscles: string[]) {
+	const clean = muscles.map((m) => m.trim()).filter(Boolean);
+	db.prepare('UPDATE exercise SET name = ?, muscle = ? WHERE id = ?').run(name, clean.join(','), id);
+	rememberMuscles(clean);
+	const r = db.prepare('SELECT id, name, type, muscle, custom FROM exercise WHERE id = ?').get(id) as any;
+	return { id: r.id, name: r.name, type: r.type, muscles: splitMuscles(r.muscle), custom: !!r.custom };
 }
 
 export function createPainCategory(name: string): string {
@@ -212,15 +295,23 @@ export function createPainCategory(name: string): string {
 	return name;
 }
 
+export function createMuscleGroup(name: string): string {
+	db.prepare('INSERT OR IGNORE INTO muscle_group (name) VALUES (?)').run(name);
+	return name;
+}
+
+type SetInput = { duration?: number; distance?: number; pace?: string | null; reps?: number; weight?: number };
 type WorkoutInput = {
 	startedAt: number;
 	routineName: string | null;
 	feel: number | null;
 	energy: number | null;
 	notes: string;
-	entries: { exerciseId: string; sets: { duration?: number; distance?: number }[]; note?: string; pain?: { cat: string; level: number } | null }[];
+	entries: { exerciseId: string; sets: SetInput[]; note?: string; pain?: { cat: string; level: number } | null }[];
 	pains: { cat: string; level: number }[];
 };
+
+const isStrengthSet = (s: SetInput) => s.reps != null || s.weight != null;
 
 export const createWorkout = db.transaction((w: WorkoutInput) => {
 	const id = uid();
@@ -229,21 +320,29 @@ export const createWorkout = db.transaction((w: WorkoutInput) => {
 	).run(id, w.startedAt, w.routineName, w.feel, w.energy, w.notes, Date.now());
 
 	const insEntry = db.prepare(
-		'INSERT INTO workout_entry (id, workout_id, exercise_id, ord, duration, distance, note, pain_cat, pain_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+		'INSERT INTO workout_entry (id, workout_id, exercise_id, ord, duration, distance, pace, note, pain_cat, pain_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+	);
+	const insSet = db.prepare(
+		'INSERT INTO workout_set (entry_id, ord, reps, weight) VALUES (?, ?, ?, ?)'
 	);
 	w.entries.forEach((e, i) => {
-		const s = e.sets && e.sets[0] ? e.sets[0] : {};
+		const entryId = uid();
+		const sets = e.sets || [];
+		const strength = sets.filter(isStrengthSet);
+		const cardio = sets.find((s) => !isStrengthSet(s)) || {};
 		insEntry.run(
-			uid(),
+			entryId,
 			id,
 			e.exerciseId,
 			i,
-			s.duration ?? null,
-			s.distance ?? null,
+			cardio.duration ?? null,
+			cardio.distance ?? null,
+			cardio.pace ?? null,
 			e.note || null,
 			e.pain?.cat ?? null,
 			e.pain?.level ?? null
 		);
+		strength.forEach((s, j) => insSet.run(entryId, j, s.reps ?? null, s.weight ?? null));
 	});
 
 	const insPain = db.prepare('INSERT INTO workout_pain (workout_id, cat, level) VALUES (?, ?, ?)');

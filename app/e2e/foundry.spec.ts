@@ -48,3 +48,47 @@ test('log a gym workout end-to-end and persist it', async ({ page }) => {
 	await expect(page.locator('.routine', { hasText: 'Gym' })).toBeVisible();
 	await expect(page.getByText(/1 exercise/)).toBeVisible();
 });
+
+test('strength sets (weight+reps) persist and carry over', async ({ page }) => {
+	await login(page);
+	await page.locator('.routine', { hasText: 'Gym' }).click();
+
+	await page.getByRole('button', { name: /Add exercise/ }).click();
+	await page.getByRole('button', { name: /New exercise/ }).click();
+	await page.getByPlaceholder('Name').fill('Squat');
+	await page.getByRole('button', { name: 'Legs' }).click();
+	await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
+
+	// Add two sets — the second copies the first (carry-over).
+	await page.getByRole('button', { name: /Add set/ }).click();
+	await page.getByRole('button', { name: /Add set/ }).click();
+	await expect(page.locator('.set-row')).toHaveCount(2);
+
+	// Edit the exercise name from the active workout.
+	await page.locator('.ex-name-edit').click();
+	await page.getByPlaceholder('Name').fill('Back Squat');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.locator('.ex-name-edit')).toContainText('Back Squat');
+
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+	await page.getByRole('button', { name: /Save workout/ }).click();
+
+	// Open the saved workout; the two sets are shown.
+	await page.getByText(/1 exercise/).first().click();
+	await expect(page.getByText('Back Squat')).toBeVisible();
+	await expect(page.locator('.d-set')).toHaveCount(2);
+});
+
+test('walk logs time + pace with estimated distance', async ({ page }) => {
+	await login(page);
+	await page.locator('.routine', { hasText: 'Walk' }).click();
+
+	// Paced UI: no km field, a distance estimate, and Normal/Fast options.
+	await expect(page.locator('.est-dist')).toBeVisible();
+	await page.getByRole('button', { name: 'Fast' }).click();
+	await expect(page.locator('.est-dist')).toContainText('km');
+
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+	await page.getByRole('button', { name: /Save workout/ }).click();
+	await expect(page.locator('.hcard', { hasText: 'Walk' }).first()).toBeVisible();
+});
