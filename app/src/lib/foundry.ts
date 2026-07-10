@@ -59,12 +59,19 @@ function load() {
     painCategories: [],
     muscleGroups: SUGGESTED_MUSCLES.slice(),
     workouts: [],
+    profile: { dob: null, height: null, gender: null },
+    bodyWeights: [],
+    albums: [],
+    photos: [],
     active: draft.active || null,
     view: draft.view || "home",
     picker: draft.picker || { q: "", cat: "All" },
     cal: draft.cal || currentMonth(),
     newDate: draft.newDate || null,
     detailId: draft.detailId || null,
+    albumId: draft.albumId || null,
+    photoTag: null,
+    loaded: false,
   };
 }
 
@@ -82,6 +89,16 @@ async function apiPost(url, body) {
     body: JSON.stringify(body),
   });
   if (!r.ok) { throw new Error("POST " + url + " -> " + r.status); }
+  return r.json();
+}
+
+async function apiDelete(url, body) {
+  const r = await fetch(url, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) { throw new Error("DELETE " + url + " -> " + r.status); }
   return r.json();
 }
 
@@ -108,6 +125,7 @@ function save() {
       cal: state.cal,
       newDate: state.newDate,
       detailId: state.detailId,
+      albumId: state.albumId,
     }));
   } catch (e) { /* storage full / unavailable */ }
 }
@@ -602,7 +620,11 @@ function render() {
   else if (state.view === "finish") { html = viewFinish(); }
   else if (state.view === "history") { html = viewHistory(); }
   else if (state.view === "detail") { html = viewDetail(); }
+  else if (state.view === "profile") { html = viewProfile(); }
+  else if (state.view === "photos") { html = viewPhotos(); }
+  else if (state.view === "album") { html = viewAlbum(); }
   app.innerHTML = html;
+  if (state.view === "profile") { drawWeightChart(); }
 }
 
 function header(opts) {
@@ -616,6 +638,8 @@ function header(opts) {
     right = opts.action;
   } else if (!opts.back) {
     right = `<div style="display:flex;gap:8px;">
+      <button class="iconbtn" data-act="photos" aria-label="Photos">\u{1F5BC}️</button>
+      <button class="iconbtn" data-act="profile" aria-label="Profile">\u{1F464}</button>
       <button class="iconbtn" data-act="history" aria-label="History">\u{1F4D6}</button>
       <button class="iconbtn" data-act="logout" aria-label="Sign out">⏻</button>
     </div>`;
@@ -1102,7 +1126,10 @@ function viewHistory() {
 /* ---- Detail ---- */
 function viewDetail() {
   const w = state.workouts.find((x) => x.id === state.detailId);
-  if (!w) { go("history"); return ""; }
+  if (!w) {
+    if (state.loaded) { go("history"); return ""; }
+    return loadingShell("History", "history");
+  }
 
   const exHtml = w.entries.map((entry) => {
     const ex = exById(entry.exerciseId);
@@ -1148,6 +1175,361 @@ function viewDetail() {
   </div>`;
 }
 
+/* ============ Profile + weight ============ */
+function ageFrom(dob) {
+  if (!dob) { return null; }
+  const b = new Date(dob), n = new Date();
+  let a = n.getFullYear() - b.getFullYear();
+  const m = n.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && n.getDate() < b.getDate())) { a--; }
+  return a;
+}
+function latestWeight() {
+  const w = state.bodyWeights;
+  return w.length ? w[w.length - 1].weight : null;
+}
+function persistProfile() { apiPost("/api/profile", state.profile).catch(() => {}); }
+
+function setGender(g) { state.profile.gender = g; persistProfile(); render(); }
+
+async function addWeighIn() {
+  const wv = parseFloat(state.weighWeight);
+  if (!wv || wv <= 0) { toast("Enter a weight"); return; }
+  const at = state.weighDate
+    ? (() => { const [y, m, d] = state.weighDate.split("-").map(Number); return new Date(y, m - 1, d, 12).getTime(); })()
+    : Date.now();
+  try {
+    const row = await apiPost("/api/weights", { weight: wv, at });
+    state.bodyWeights.push(row);
+    state.bodyWeights.sort((a, b) => a.at - b.at);
+    state.weighWeight = "";
+    render();
+    toast("Weigh-in added");
+  } catch (e) { toast("Couldn't save"); }
+}
+async function deleteWeighIn(id) {
+  try { await apiDelete("/api/weights", { id }); } catch (e) { /* ignore */ }
+  state.bodyWeights = state.bodyWeights.filter((w) => w.id !== id);
+  render();
+}
+
+function viewProfile() {
+  const p = state.profile;
+  const age = ageFrom(p.dob);
+  const lw = latestWeight();
+  const genders = ["Male", "Female", "Other"];
+  const genderChips = genders.map((g) =>
+    `<button class="chip ${p.gender === g ? "active" : ""}" data-act="gender" data-g="${g}">${g}</button>`
+  ).join("");
+
+  const stat = (v, k) => `<div class="dstat"><div class="v tnum">${v}</div><div class="k">${k}</div></div>`;
+  const history = state.bodyWeights.slice().reverse().map((w) =>
+    `<div class="wrow">
+      <span class="wrow-date">${new Date(w.at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span>
+      <span class="wrow-val tnum">${w.weight} kg</span>
+      <button class="wrow-del" data-act="del-weigh" data-id="${w.id}" aria-label="Delete">×</button>
+    </div>`
+  ).join("");
+
+  return `<div class="app">
+    ${header({ back: "home", backLabel: "Home" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">Profile</span></div>
+
+      <div class="detail-stat-row">
+        ${stat(age != null ? age : "–", "Age")}
+        ${stat(p.height ? p.height : "–", "Height cm")}
+        ${stat(lw != null ? lw : "–", "Weight kg")}
+      </div>
+
+      <div class="finish-block">
+        <span class="eyebrow">Date of birth</span>
+        <input class="date-input" type="date" value="${p.dob || ""}" data-act="dob">
+      </div>
+      <div class="finish-block">
+        <span class="eyebrow">Height (cm)</span>
+        <input class="picker-search" type="number" inputmode="decimal" placeholder="cm" value="${p.height != null ? p.height : ""}" data-act="height">
+      </div>
+      <div class="finish-block">
+        <span class="eyebrow">Gender</span>
+        <div class="chip-row">${genderChips}</div>
+      </div>
+
+      <div class="section-head" style="margin-top:8px;"><span class="eyebrow">Weight over time</span></div>
+      <div class="chart-card">
+        <canvas id="wchart" class="wchart"></canvas>
+        ${state.bodyWeights.length === 0 ? `<div class="chart-empty">No weigh-ins yet</div>` : ""}
+      </div>
+
+      <div class="weigh-add">
+        <input class="picker-search" style="margin:0;flex:1;" type="number" inputmode="decimal" placeholder="Weight kg" value="${escAttr(state.weighWeight || "")}" data-act="weigh-weight">
+        <input class="date-input" style="flex:0 0 auto;width:auto;" type="date" value="${state.weighDate || dateInputValue(Date.now())}" data-act="weigh-date">
+        <button class="chip" data-act="add-weigh">Add</button>
+      </div>
+
+      ${history ? `<div class="wlist">${history}</div>` : ""}
+    </main>
+  </div>`;
+}
+
+function drawWeightChart() {
+  const cv = document.getElementById("wchart");
+  if (!cv) { return; }
+  const data = state.bodyWeights;
+  const ctx = cv.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 300;
+  const H = cv.clientHeight || 140;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (!data.length) { return; }
+
+  const pad = { l: 10, r: 10, t: 14, b: 18 };
+  const ys = data.map((d) => d.weight);
+  let minY = Math.min(...ys), maxY = Math.max(...ys);
+  if (minY === maxY) { minY -= 1; maxY += 1; }
+  const minX = data[0].at, maxX = data[data.length - 1].at;
+  const spanX = (maxX - minX) || 1;
+  const px = (t) => pad.l + (W - pad.l - pad.r) * ((t - minX) / spanX);
+  const py = (v) => pad.t + (H - pad.t - pad.b) * (1 - (v - minY) / (maxY - minY));
+
+  const pts = data.map((d) => [data.length === 1 ? W / 2 : px(d.at), py(d.weight)]);
+
+  // Area fill
+  const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
+  grad.addColorStop(0, "rgba(251,113,65,0.32)");
+  grad.addColorStop(1, "rgba(251,113,65,0.02)");
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], H - pad.b);
+  pts.forEach((p) => ctx.lineTo(p[0], p[1]));
+  ctx.lineTo(pts[pts.length - 1][0], H - pad.b);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+  ctx.strokeStyle = "#FB7141";
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+
+  // Endpoint dot
+  const last = pts[pts.length - 1];
+  ctx.beginPath();
+  ctx.arc(last[0], last[1], 4, 0, Math.PI * 2);
+  ctx.fillStyle = "#FB7141";
+  ctx.fill();
+
+  // Min/max labels
+  ctx.fillStyle = "rgba(232,235,240,0.5)";
+  ctx.font = "600 10px -apple-system, system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(maxY.toFixed(1), pad.l, pad.t - 3);
+  ctx.fillText(minY.toFixed(1), pad.l, H - 5);
+}
+
+/* ============ Photos / albums ============ */
+function photosInAlbum(albumId) {
+  return state.photos.filter((p) => (albumId === null ? true : p.albumId === albumId));
+}
+function albumCover(albumId) {
+  const ps = state.photos.filter((p) => p.albumId === albumId);
+  return ps.length ? ps[0].id : null;
+}
+function allPhotoTags() {
+  const out = [];
+  state.photos.forEach((p) => (p.tags || []).forEach((t) => { if (!out.includes(t)) { out.push(t); } }));
+  return out.sort();
+}
+
+function viewPhotos() {
+  const albumCards = state.albums.map((a) => {
+    const cover = albumCover(a.id);
+    const count = state.photos.filter((p) => p.albumId === a.id).length;
+    const bg = cover
+      ? `background-image:url(/api/photos/${cover});`
+      : "background:var(--surface-2);";
+    return `<button class="album-card" data-act="open-album" data-id="${a.id}">
+      <div class="album-cover" style="${bg}">${cover ? "" : "🖼️"}</div>
+      <div class="album-meta"><span class="album-name">${a.name}</span><span class="album-count">${count} photo${count !== 1 ? "s" : ""}</span></div>
+    </button>`;
+  }).join("");
+
+  const allCount = state.photos.length;
+  const allCover = state.photos[0] ? state.photos[0].id : null;
+
+  return `<div class="app">
+    ${header({ back: "home", backLabel: "Home" })}
+    <main>
+      <div class="section-head">
+        <span class="eyebrow">Photos</span>
+        ${state.newAlbumOpen
+          ? `<span class="inline-new"><input class="inline-new-input" data-act="new-album-text" value="${escAttr(state.newAlbumName || "")}" placeholder="Album name…" autofocus><button class="chip" data-act="new-album-add">Add</button></span>`
+          : `<button class="back-btn" data-act="new-album">+ New album</button>`}
+      </div>
+      <div class="album-grid">
+        <button class="album-card" data-act="open-album" data-id="__all__">
+          <div class="album-cover" style="${allCover ? `background-image:url(/api/photos/${allCover});` : "background:var(--surface-2);"}">${allCover ? "" : "🖼️"}</div>
+          <div class="album-meta"><span class="album-name">All photos</span><span class="album-count">${allCount} photo${allCount !== 1 ? "s" : ""}</span></div>
+        </button>
+        ${albumCards}
+      </div>
+      ${state.albums.length === 0 && allCount === 0 ? `<div class="empty" style="margin-top:16px;">No photos yet. Make an album and upload progress pics.</div>` : ""}
+    </main>
+  </div>`;
+}
+
+function loadingShell(backLabel, backTarget) {
+  return `<div class="app">${header({ back: backTarget, backLabel })}<main></main></div>`;
+}
+
+function viewAlbum() {
+  const isAll = state.albumId === "__all__";
+  const album = isAll ? { id: "__all__", name: "All photos" } : state.albums.find((a) => a.id === state.albumId);
+  if (!album) {
+    if (state.loaded) { go("photos"); return ""; }
+    return loadingShell("Albums", "photos"); // data still loading after a reload
+  }
+
+  let photos = photosInAlbum(isAll ? null : album.id);
+  const tags = allPhotoTags();
+  if (state.photoTag) { photos = photos.filter((p) => (p.tags || []).includes(state.photoTag)); }
+
+  const tagRow = tags.length
+    ? `<div class="cat-row">
+        <button class="chip ${!state.photoTag ? "active" : ""}" data-act="photo-tag" data-tag="">All</button>
+        ${tags.map((t) => `<button class="chip ${state.photoTag === t ? "active" : ""}" data-act="photo-tag" data-tag="${escAttr(t)}">${t}</button>`).join("")}
+      </div>`
+    : "";
+
+  const grid = photos.length
+    ? `<div class="pgrid">${photos.map((p) =>
+        `<button class="pgrid-cell" data-act="open-photo" data-id="${p.id}">
+          <img class="pgrid-img" src="/api/photos/${p.id}" loading="lazy" alt="${escAttr(p.caption || "photo")}">
+        </button>`
+      ).join("")}</div>`
+    : `<div class="empty" style="margin-top:16px;">No photos${state.photoTag ? " with this tag" : " yet"}.</div>`;
+
+  const lightbox = state.viewPhotoId ? photoLightbox() : "";
+  const sheet = state.pendingUpload ? uploadSheet() : "";
+
+  return `<div class="app">
+    ${header({ back: "photos", backLabel: "Albums" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">${album.name}</span></div>
+      ${tagRow}
+      ${grid}
+    </main>
+    <div class="footer">
+      <button class="btn btn-primary" data-act="pick-photo">＋  Add photo</button>
+    </div>
+    <input type="file" accept="image/*" id="photo-file" data-act="photo-file" style="display:none">
+    ${lightbox}
+    ${sheet}
+  </div>`;
+}
+
+function photoLightbox() {
+  const p = state.photos.find((x) => x.id === state.viewPhotoId);
+  if (!p) { return ""; }
+  const tags = (p.tags || []).map((t) => `<span class="ex-tag">${t}</span>`).join("");
+  return `<div class="lightbox" data-act="close-photo">
+    <div class="lightbox-inner" data-act="noop">
+      <img class="lightbox-img" src="/api/photos/${p.id}" alt="${escAttr(p.caption || "photo")}">
+      ${p.caption ? `<div class="lightbox-cap">${escAttr(p.caption)}</div>` : ""}
+      ${tags ? `<div class="ex-tags" style="justify-content:center;">${tags}</div>` : ""}
+      <button class="text-btn" style="color:var(--hot);margin-top:6px;" data-act="del-photo" data-id="${p.id}">Delete photo</button>
+    </div>
+    <button class="lightbox-close" data-act="close-photo" aria-label="Close">×</button>
+  </div>`;
+}
+
+function uploadSheet() {
+  const u = state.pendingUpload;
+  return `<div class="sheet-wrap" data-act="cancel-upload">
+    <div class="sheet" data-act="noop">
+      <div class="eyebrow" style="margin-bottom:12px;">New photo</div>
+      <img class="sheet-preview" src="${u.previewUrl}" alt="preview">
+      <input class="picker-search" placeholder="Caption (optional)" value="${escAttr(u.caption)}" data-act="up-caption">
+      <input class="picker-search" placeholder="Tags, comma-separated (e.g. front, week 1)" value="${escAttr(u.tags)}" data-act="up-tags">
+      <div class="sheet-actions">
+        <button class="btn btn-ghost" data-act="cancel-upload">Cancel</button>
+        <button class="btn btn-primary" data-act="confirm-upload" ${u.busy ? "disabled style=opacity:0.5" : ""}>${u.busy ? "Uploading…" : "Upload"}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---- Upload flow (browser downscales before sending) ---- */
+const MAX_UPLOAD_DIM = 1920;
+function pickPhoto() {
+  const el = document.getElementById("photo-file");
+  if (el) { el.click(); }
+}
+function onPhotoFile(file) {
+  if (!file) { return; }
+  const url = URL.createObjectURL(file);
+  state.pendingUpload = { file, previewUrl: url, caption: "", tags: "", busy: false };
+  render();
+}
+function downscale(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      let { width, height } = img;
+      const scale = Math.min(1, MAX_UPLOAD_DIM / Math.max(width, height));
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+      const cv = document.createElement("canvas");
+      cv.width = width; cv.height = height;
+      cv.getContext("2d").drawImage(img, 0, 0, width, height);
+      URL.revokeObjectURL(url);
+      cv.toBlob((blob) => resolve(blob || file), "image/jpeg", 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+async function confirmUpload() {
+  const u = state.pendingUpload;
+  if (!u || u.busy) { return; }
+  u.busy = true; render();
+  try {
+    const blob = await downscale(u.file);
+    const fd = new FormData();
+    fd.append("file", blob, "photo.jpg");
+    if (state.albumId && state.albumId !== "__all__") { fd.append("albumId", state.albumId); }
+    fd.append("caption", u.caption || "");
+    fd.append("tags", u.tags || "");
+    const r = await fetch("/api/photos", { method: "POST", body: fd });
+    if (!r.ok) { throw new Error("upload failed"); }
+    const photo = await r.json();
+    state.photos.unshift(photo);
+    URL.revokeObjectURL(u.previewUrl);
+    state.pendingUpload = null;
+    render();
+    toast("Photo added ✓");
+  } catch (e) {
+    u.busy = false; render();
+    toast("Upload failed");
+  }
+}
+function cancelUpload() {
+  if (state.pendingUpload) { URL.revokeObjectURL(state.pendingUpload.previewUrl); }
+  state.pendingUpload = null;
+  render();
+}
+async function deletePhotoById(id) {
+  try { await apiDelete("/api/photos", { id }); } catch (e) { /* ignore */ }
+  state.photos = state.photos.filter((p) => p.id !== id);
+  state.viewPhotoId = null;
+  render();
+}
+
 /* ============ Event delegation ============ */
 app.addEventListener("click", (e) => {
   const t = e.target.closest("[data-act]");
@@ -1161,6 +1543,30 @@ app.addEventListener("click", (e) => {
     case "history": go("history"); break;
     case "home": go("home"); break;
     case "active": go("active"); break;
+    case "profile": go("profile"); break;
+    case "photos": state.photoTag = null; go("photos"); break;
+    case "gender": setGender(t.dataset.g); break;
+    case "add-weigh": addWeighIn(); break;
+    case "del-weigh": deleteWeighIn(parseInt(t.dataset.id, 10)); break;
+    case "new-album": state.newAlbumOpen = true; render(); break;
+    case "new-album-add": {
+      const nm = (state.newAlbumName || "").trim();
+      if (!nm) { state.newAlbumOpen = false; render(); break; }
+      apiPost("/api/albums", { name: nm }).then((a) => {
+        state.albums.unshift(a); state.newAlbumOpen = false; state.newAlbumName = "";
+        state.albumId = a.id; go("album");
+      }).catch(() => toast("Couldn't create album"));
+      break;
+    }
+    case "open-album": state.albumId = t.dataset.id; state.photoTag = null; go("album"); break;
+    case "photo-tag": state.photoTag = t.dataset.tag || null; render(); break;
+    case "pick-photo": pickPhoto(); break;
+    case "confirm-upload": confirmUpload(); break;
+    case "cancel-upload": cancelUpload(); break;
+    case "open-photo": state.viewPhotoId = t.dataset.id; render(); break;
+    case "close-photo": state.viewPhotoId = null; render(); break;
+    case "del-photo": deletePhotoById(t.dataset.id); break;
+    case "noop": break;
     case "start-empty": startWorkout(null, t.dataset.date ? parseInt(t.dataset.date, 10) : undefined); break;
     case "start-routine": startWorkout(state.routines.find((r) => r.id === t.dataset.id), t.dataset.date ? parseInt(t.dataset.date, 10) : undefined); break;
     case "open-picker": state.picker = { q: "", cat: "All" }; go("picker"); break;
@@ -1224,6 +1630,13 @@ app.addEventListener("input", (e) => {
   else if (act === "ex-note") { setExNote(parseInt(t.dataset.ei, 10), t.value); }
   else if (act === "new-name") { state.picker.newName = t.value; }
   else if (act === "new-tag-text") { state.picker.newTagText = t.value; }
+  else if (act === "dob") { state.profile.dob = t.value || null; persistProfile(); }
+  else if (act === "height") { state.profile.height = t.value ? Number(t.value) : null; persistProfile(); }
+  else if (act === "weigh-weight") { state.weighWeight = t.value; }
+  else if (act === "weigh-date") { state.weighDate = t.value; }
+  else if (act === "new-album-text") { state.newAlbumName = t.value; }
+  else if (act === "up-caption") { if (state.pendingUpload) { state.pendingUpload.caption = t.value; } }
+  else if (act === "up-tags") { if (state.pendingUpload) { state.pendingUpload.tags = t.value; } }
   else if (act === "ex-pain-new-text") { state.active.entries[parseInt(t.dataset.ei, 10)].painNewText = t.value; }
   else if (act === "finish-pain-new-text") { state.active.painNewText = t.value; }
   else if (act === "wdate" && t.value) {
@@ -1234,6 +1647,15 @@ app.addEventListener("input", (e) => {
   }
   else if (act === "setfield") {
     setField(parseInt(t.dataset.ei, 10), parseInt(t.dataset.si, 10), t.dataset.field, t.value);
+  }
+});
+
+// File input fires "change", not "input".
+app.addEventListener("change", (e) => {
+  const t = e.target.closest("[data-act]");
+  if (t && t.dataset.act === "photo-file") {
+    onPhotoFile(t.files && t.files[0]);
+    t.value = ""; // allow re-picking the same file
   }
 });
 
@@ -1258,6 +1680,11 @@ async function boot() {
     state.painCategories = data.painCategories;
     state.muscleGroups = data.muscleGroups || [];
     state.workouts = data.workouts;
+    state.profile = data.profile || state.profile;
+    state.bodyWeights = data.bodyWeights || [];
+    state.albums = data.albums || [];
+    state.photos = data.photos || [];
+    state.loaded = true;
     render();
   } catch (e) {
     toast("Offline — showing cached view");

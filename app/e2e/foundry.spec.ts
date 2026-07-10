@@ -79,6 +79,47 @@ test('strength sets (weight+reps) persist and carry over', async ({ page }) => {
 	await expect(page.locator('.d-set')).toHaveCount(2);
 });
 
+test('profile: weigh-in persists across reload', async ({ page }) => {
+	await login(page);
+	await page.getByRole('button', { name: 'Profile' }).click();
+
+	await page.locator('[data-act="weigh-weight"]').fill('80.5');
+	await page.getByRole('button', { name: 'Add', exact: true }).click();
+	await expect(page.getByText('80.5 kg')).toBeVisible();
+
+	// Reload — the app restores to Profile and the weigh-in comes from the DB.
+	await page.reload();
+	await expect(page.getByText('80.5 kg')).toBeVisible();
+});
+
+test('photos: create album, upload, appears in grid', async ({ page }) => {
+	await login(page);
+	await page.getByRole('button', { name: 'Photos' }).click();
+
+	await page.getByRole('button', { name: /New album/ }).click();
+	await page.locator('[data-act="new-album-text"]').fill('Progress');
+	await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+	// Upload a tiny generated JPEG via the hidden file input.
+	await page.locator('[data-act="pick-photo"]').waitFor();
+	await page.locator('#photo-file').setInputFiles({
+		name: 'p.jpg',
+		mimeType: 'image/jpeg',
+		buffer: Buffer.from(
+			'/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wAALCAAyADIBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAv/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==',
+			'base64'
+		)
+	});
+	await page.locator('.sheet-preview').waitFor();
+	await page.locator('[data-act="up-tags"]').fill('front');
+	await page.getByRole('button', { name: 'Upload', exact: true }).click();
+	await expect(page.locator('.pgrid-img').first()).toBeVisible();
+
+	// Reload — restores to the album (albumId is persisted); photo served from DB.
+	await page.reload();
+	await expect(page.locator('.pgrid-img').first()).toBeVisible();
+});
+
 test('walk logs time + pace with estimated distance', async ({ page }) => {
 	await login(page);
 	await page.locator('.routine', { hasText: 'Walk' }).click();

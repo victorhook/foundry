@@ -98,7 +98,42 @@ const migrations: Array<(d: Database.Database) => void> = [
 	// v4 -> v5: bodyweight exercises (reps only, no weight).
 	(d) => d.exec('ALTER TABLE exercise ADD COLUMN bodyweight INTEGER NOT NULL DEFAULT 0'),
 	// v5 -> v6: unit for the load field ("kg" default, or "sec" for timed holds).
-	(d) => d.exec("ALTER TABLE exercise ADD COLUMN unit TEXT NOT NULL DEFAULT 'kg'")
+	(d) => d.exec("ALTER TABLE exercise ADD COLUMN unit TEXT NOT NULL DEFAULT 'kg'"),
+	// v6 -> v7: single-row person profile.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS profile (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			dob TEXT,
+			height REAL,
+			gender TEXT
+		)`),
+	// v7 -> v8: body-weight history (weigh-ins over time).
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS body_weight (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			at INTEGER NOT NULL,
+			weight REAL NOT NULL,
+			created_at INTEGER NOT NULL
+		)`),
+	// v8 -> v9: photo albums.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS album (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`),
+	// v9 -> v10: photos (files on disk, metadata here).
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS photo (
+			id TEXT PRIMARY KEY,
+			album_id TEXT REFERENCES album(id) ON DELETE SET NULL,
+			filename TEXT NOT NULL,
+			mime TEXT,
+			caption TEXT,
+			tags TEXT,
+			taken_at INTEGER,
+			created_at INTEGER NOT NULL
+		)`)
 ];
 
 function migrate() {
@@ -254,13 +289,116 @@ export function getWorkouts() {
 	}));
 }
 
+export function getProfile() {
+	const r = db.prepare('SELECT dob, height, gender FROM profile WHERE id = 1').get() as any;
+	return r || { dob: null, height: null, gender: null };
+}
+
+export function getBodyWeights() {
+	return db
+		.prepare('SELECT id, at, weight FROM body_weight ORDER BY at')
+		.all()
+		.map((r: any) => ({ id: r.id, at: r.at, weight: r.weight }));
+}
+
+export function getAlbums() {
+	return db.prepare('SELECT id, name, created_at FROM album ORDER BY created_at DESC').all() as any[];
+}
+
+export function getPhotos() {
+	return db
+		.prepare('SELECT id, album_id, mime, caption, tags, taken_at, created_at FROM photo ORDER BY COALESCE(taken_at, created_at) DESC')
+		.all()
+		.map((r: any) => ({
+			id: r.id,
+			albumId: r.album_id,
+			mime: r.mime,
+			caption: r.caption || '',
+			tags: (r.tags || '').split(',').map((t: string) => t.trim()).filter(Boolean),
+			takenAt: r.taken_at,
+			createdAt: r.created_at
+		}));
+}
+
 export function getAllData() {
 	return {
 		exercises: getExercises(),
 		painCategories: getPainCategories(),
 		muscleGroups: getMuscleGroups(),
-		workouts: getWorkouts()
+		workouts: getWorkouts(),
+		profile: getProfile(),
+		bodyWeights: getBodyWeights(),
+		albums: getAlbums(),
+		photos: getPhotos()
 	};
+}
+
+// --- Profile / weight ---
+export function saveProfile(p: { dob: string | null; height: number | null; gender: string | null }) {
+	db.prepare(
+		`INSERT INTO profile (id, dob, height, gender) VALUES (1, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET dob = excluded.dob, height = excluded.height, gender = excluded.gender`
+	).run(p.dob, p.height, p.gender);
+	return getProfile();
+}
+
+export function addBodyWeight(at: number, weight: number) {
+	const info = db
+		.prepare('INSERT INTO body_weight (at, weight, created_at) VALUES (?, ?, ?)')
+		.run(at, weight, Date.now());
+	return { id: info.lastInsertRowid as number, at, weight };
+}
+
+export function deleteBodyWeight(id: number) {
+	db.prepare('DELETE FROM body_weight WHERE id = ?').run(id);
+}
+
+// --- Albums / photos ---
+export function createAlbum(name: string) {
+	const id = uid();
+	const created_at = Date.now();
+	db.prepare('INSERT INTO album (id, name, created_at) VALUES (?, ?, ?)').run(id, name, created_at);
+	return { id, name, created_at };
+}
+
+export function deleteAlbum(id: string) {
+	db.prepare('DELETE FROM album WHERE id = ?').run(id);
+}
+
+export function addPhoto(p: {
+	albumId: string | null;
+	filename: string;
+	mime: string;
+	caption: string;
+	tags: string[];
+	takenAt: number | null;
+}) {
+	const id = uid();
+	const created_at = Date.now();
+	db.prepare(
+		'INSERT INTO photo (id, album_id, filename, mime, caption, tags, taken_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+	).run(id, p.albumId, p.filename, p.mime, p.caption, p.tags.join(','), p.takenAt, created_at);
+	return {
+		id,
+		albumId: p.albumId,
+		mime: p.mime,
+		caption: p.caption,
+		tags: p.tags,
+		takenAt: p.takenAt,
+		createdAt: created_at
+	};
+}
+
+export function getPhotoFile(id: string) {
+	return db.prepare('SELECT filename, mime FROM photo WHERE id = ?').get(id) as
+		| { filename: string; mime: string }
+		| undefined;
+}
+
+export function deletePhoto(id: string) {
+	const row = getPhotoFile(id);
+	db.prepare('DELETE FROM photo WHERE id = ?').run(id);
+	return row;
 }
 
 // --- Mutations ---

@@ -479,6 +479,83 @@
   .back-btn { display: flex; align-items: center; gap: 4px; color: var(--muted); font-weight: 600; font-size: 0.95rem; }
   .back-btn:active { color: var(--text); }
 
+  /* ---------- Profile: weight chart + weigh-ins ---------- */
+  .chart-card {
+    position: relative; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 10px 8px 4px; margin-bottom: 14px;
+  }
+  .wchart { width: 100%; height: 150px; display: block; }
+  .chart-empty {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    color: var(--muted-2); font-size: 0.9rem;
+  }
+  .weigh-add { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .weigh-add .chip { flex-shrink: 0; padding: 10px 16px; }
+  .wlist { display: flex; flex-direction: column; gap: 2px; }
+  .wrow {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 14px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+  }
+  .wrow-date { flex: 1; color: var(--muted); font-size: 0.88rem; }
+  .wrow-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .wrow-del { color: var(--muted-2); font-size: 1.1rem; padding: 0 4px; }
+  .wrow-del:active { color: var(--hot); }
+
+  /* ---------- Albums grid ---------- */
+  .album-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .album-card {
+    display: flex; flex-direction: column; gap: 8px; text-align: left;
+    background: none; border: none; padding: 0;
+  }
+  .album-cover {
+    aspect-ratio: 1; border-radius: var(--radius); background-size: cover; background-position: center;
+    border: 1px solid var(--line); display: grid; place-items: center; font-size: 2rem;
+  }
+  .album-card:active .album-cover { border-color: var(--accent); }
+  .album-meta { display: flex; flex-direction: column; gap: 1px; padding: 0 2px; }
+  .album-name { font-weight: 700; font-size: 0.95rem; }
+  .album-count { font-size: 0.78rem; color: var(--muted); }
+
+  /* ---------- Photo grid ---------- */
+  .pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .pgrid-cell {
+    aspect-ratio: 1; padding: 0; border: none; background: var(--surface-2);
+    border-radius: 6px; overflow: hidden;
+  }
+  .pgrid-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pgrid-cell:active { opacity: 0.85; }
+
+  /* ---------- Lightbox ---------- */
+  .lightbox {
+    position: fixed; inset: 0; z-index: 60; background: rgba(10,12,15,0.94);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px; gap: 12px;
+  }
+  .lightbox-inner { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 100%; }
+  .lightbox-img { max-width: 100%; max-height: 72vh; border-radius: 12px; object-fit: contain; }
+  .lightbox-cap { color: var(--text); font-size: 0.95rem; text-align: center; }
+  .lightbox-close {
+    position: absolute; top: calc(14px + env(safe-area-inset-top)); right: 18px;
+    width: 40px; height: 40px; border-radius: 50%; background: var(--surface-2);
+    color: var(--text); font-size: 1.4rem; border: 1px solid var(--line);
+  }
+
+  /* ---------- Bottom sheet (photo upload) ---------- */
+  .sheet-wrap {
+    position: fixed; inset: 0; z-index: 60; background: rgba(10,12,15,0.6);
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .sheet {
+    width: 100%; max-width: var(--frame); background: var(--surface);
+    border-top-left-radius: 20px; border-top-right-radius: 20px;
+    border-top: 1px solid var(--line); padding: 20px 18px calc(20px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .sheet-preview { width: 100%; max-height: 40vh; object-fit: contain; border-radius: 12px; background: var(--surface-2); }
+  .sheet-actions { display: flex; gap: 10px; margin-top: 4px; }
+  .sheet-actions .btn { flex: 1; padding: 14px; border-radius: 14px; font-weight: 800; }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }

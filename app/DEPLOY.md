@@ -136,6 +136,13 @@ ls -la /opt/foundry/backups
 This writes `/opt/foundry/backups/foundry-<date>.db` at 03:30 nightly and deletes
 copies older than 30 days (tune via `BACKUP_KEEP_DAYS` in `.env`).
 
+### Photos are separate from the DB backup
+
+Uploaded photos are files in `/opt/foundry/data/uploads/` (only their metadata is in
+the DB). The nightly `.backup` covers the DB, **not** the image files — to protect
+photos too, also copy that directory, e.g. `rsync -a /opt/foundry/data/uploads/
+/opt/foundry/backups/uploads/` (add to `deploy/backup.sh` to automate).
+
 ### Restore
 
 ```bash
