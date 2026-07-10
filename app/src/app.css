@@ -274,6 +274,27 @@
     border-radius: 10px; color: var(--text); padding: 11px 12px; font-size: 0.92rem;
   }
 
+  /* Collapsed exercise row — dense summary, tap to expand */
+  .ex-collapsed {
+    width: 100%; display: flex; align-items: center; gap: 10px;
+    padding: 13px 16px; text-align: left; background: none; color: inherit;
+  }
+  .ex-collapsed:active { background: var(--surface-2); }
+  .ec-name { font-weight: 700; font-size: 0.98rem; white-space: nowrap; }
+  .ec-summary {
+    flex: 1; min-width: 0; color: var(--muted); font-size: 0.82rem;
+    font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ec-flag { font-size: 0.82rem; flex-shrink: 0; }
+  .ec-chev {
+    color: var(--muted-2); font-size: 1.2rem; flex-shrink: 0;
+    transition: transform 0.15s ease; transform: rotate(90deg);
+  }
+  .ex-card.expanded { box-shadow: 0 0 0 1px var(--line); }
+  button.ec-chev.open {
+    background: none; padding: 0 2px; transform: rotate(270deg); color: var(--muted);
+  }
+
   /* Editable exercise name + tags */
   .ex-head { flex-wrap: wrap; }
   .ex-name-edit {

@@ -94,7 +94,11 @@ const migrations: Array<(d: Database.Database) => void> = [
 			name TEXT UNIQUE NOT NULL
 		)`),
 	// v3 -> v4: walk pace ("normal"/"fast") stored on the cardio entry.
-	(d) => d.exec('ALTER TABLE workout_entry ADD COLUMN pace TEXT')
+	(d) => d.exec('ALTER TABLE workout_entry ADD COLUMN pace TEXT'),
+	// v4 -> v5: bodyweight exercises (reps only, no weight).
+	(d) => d.exec('ALTER TABLE exercise ADD COLUMN bodyweight INTEGER NOT NULL DEFAULT 0'),
+	// v5 -> v6: unit for the load field ("kg" default, or "sec" for timed holds).
+	(d) => d.exec("ALTER TABLE exercise ADD COLUMN unit TEXT NOT NULL DEFAULT 'kg'")
 ];
 
 function migrate() {
@@ -174,13 +178,15 @@ function splitMuscles(s: string | null): string[] {
 
 export function getExercises() {
 	return db
-		.prepare('SELECT id, name, type, muscle, custom FROM exercise ORDER BY name')
+		.prepare('SELECT id, name, type, muscle, bodyweight, unit, custom FROM exercise ORDER BY name')
 		.all()
 		.map((r: any) => ({
 			id: r.id,
 			name: r.name,
 			type: r.type,
 			muscles: splitMuscles(r.muscle),
+			bodyweight: !!r.bodyweight,
+			unit: r.unit || 'kg',
 			custom: !!r.custom
 		}));
 }
@@ -272,22 +278,36 @@ function rememberMuscles(muscles: string[]) {
 	}
 }
 
-export function createExercise(name: string, muscles: string[]) {
+export function createExercise(name: string, muscles: string[], bodyweight: boolean, unit: string) {
 	const id = uid();
 	const clean = muscles.map((m) => m.trim()).filter(Boolean);
 	db.prepare(
-		'INSERT INTO exercise (id, name, type, muscle, custom, created_at) VALUES (?, ?, ?, ?, 1, ?)'
-	).run(id, name, 'strength', clean.join(','), Date.now());
+		'INSERT INTO exercise (id, name, type, muscle, bodyweight, unit, custom, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)'
+	).run(id, name, 'strength', clean.join(','), bodyweight ? 1 : 0, unit, Date.now());
 	rememberMuscles(clean);
-	return { id, name, type: 'strength', muscles: clean, custom: true };
+	return { id, name, type: 'strength', muscles: clean, bodyweight, unit, custom: true };
 }
 
-export function updateExercise(id: string, name: string, muscles: string[]) {
+export function updateExercise(id: string, name: string, muscles: string[], bodyweight: boolean, unit: string) {
 	const clean = muscles.map((m) => m.trim()).filter(Boolean);
-	db.prepare('UPDATE exercise SET name = ?, muscle = ? WHERE id = ?').run(name, clean.join(','), id);
+	db.prepare('UPDATE exercise SET name = ?, muscle = ?, bodyweight = ?, unit = ? WHERE id = ?').run(
+		name,
+		clean.join(','),
+		bodyweight ? 1 : 0,
+		unit,
+		id
+	);
 	rememberMuscles(clean);
-	const r = db.prepare('SELECT id, name, type, muscle, custom FROM exercise WHERE id = ?').get(id) as any;
-	return { id: r.id, name: r.name, type: r.type, muscles: splitMuscles(r.muscle), custom: !!r.custom };
+	const r = db.prepare('SELECT id, name, type, muscle, bodyweight, unit, custom FROM exercise WHERE id = ?').get(id) as any;
+	return {
+		id: r.id,
+		name: r.name,
+		type: r.type,
+		muscles: splitMuscles(r.muscle),
+		bodyweight: !!r.bodyweight,
+		unit: r.unit || 'kg',
+		custom: !!r.custom
+	};
 }
 
 export function createPainCategory(name: string): string {

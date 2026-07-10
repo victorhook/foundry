@@ -6,6 +6,7 @@
 /* ============ Constants ============ */
 const STORAGE_KEY = "foundry_draft";
 const WEIGHT_STEP = 2.5;
+const TIME_STEP = 5;       // seconds, for the "sec" load unit
 const REPS_STEP = 1;
 const DURATION_STEP = 1;   // minutes
 const DISTANCE_STEP = 0.5; // km
@@ -113,7 +114,21 @@ function save() {
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
 function exById(id) {
-  return state.exercises.find((e) => e.id === id) || { id, name: "Unknown", type: "strength", muscles: [] };
+  return state.exercises.find((e) => e.id === id) || { id, name: "Unknown", type: "strength", muscles: [], bodyweight: false, unit: "kg" };
+}
+
+// Label for an exercise's load field (the second stepper on a set).
+function loadUnit(ex) { return ex.unit === "sec" ? "sec" : "kg"; }
+
+// Accordion: exactly one exercise expanded at a time keeps the active list dense.
+function setOnlyExpanded(idx) {
+  state.active.entries.forEach((en, i) => { en.expanded = i === idx; });
+}
+function toggleExpand(entryIdx) {
+  const en = state.active.entries[entryIdx];
+  if (en.expanded) { en.expanded = false; } else { setOnlyExpanded(entryIdx); }
+  save();
+  render();
 }
 
 function isPaced(ex) { return PACED_CARDIO.includes(ex.id); }
@@ -251,6 +266,7 @@ function startWorkout(routine, ts) {
     pains: {},
     notes: "",
   };
+  if (entries.length) { setOnlyExpanded(entries.length - 1); }
   go("active");
 }
 
@@ -267,12 +283,14 @@ function repeatWorkout(w) {
     pains: {},
     notes: "",
   };
+  if (state.active.entries.length) { setOnlyExpanded(state.active.entries.length - 1); }
   go("active");
   toast("Copied — adjust and finish");
 }
 
 function addExerciseToActive(id) {
   state.active.entries.push(newEntry(exById(id)));
+  setOnlyExpanded(state.active.entries.length - 1);
   save();
   go("active");
 }
@@ -280,15 +298,19 @@ function addExerciseToActive(id) {
 /* ---- Strength sets (weight + reps, carried over) ---- */
 function addSet(entryIdx) {
   const entry = state.active.entries[entryIdx];
+  const bw = exById(entry.exerciseId).bodyweight;
   const prev = entry.sets[entry.sets.length - 1];
+  let s;
   if (prev) {
-    entry.sets.push({ reps: prev.reps, weight: prev.weight });
+    s = { reps: prev.reps };
+    if (!bw) { s.weight = prev.weight; }
   } else {
     const last = lastSetFor(entry.exerciseId);
-    entry.sets.push(last && last.reps != null
-      ? { reps: last.reps, weight: last.weight }
-      : { ...DEFAULT_STRENGTH_SET });
+    const reps = last && last.reps != null ? last.reps : DEFAULT_STRENGTH_SET.reps;
+    s = { reps };
+    if (!bw) { s.weight = last && last.weight != null ? last.weight : DEFAULT_STRENGTH_SET.weight; }
   }
+  entry.sets.push(s);
   save();
   render();
 }
@@ -402,6 +424,8 @@ function openExerciseForm(exId) {
   state.picker.newName = ex ? ex.name : (state.picker.q || "");
   state.picker.newTags = ex ? (ex.muscles || []).slice() : [];
   state.picker.newTagText = "";
+  state.picker.newBodyweight = ex ? !!ex.bodyweight : false;
+  state.picker.newUnit = ex ? loadUnit(ex) : "kg";
   go("picker"); // the form renders inside the picker view
 }
 
@@ -432,7 +456,13 @@ async function saveExercise() {
   const editingId = state.picker.editingId;
   let ex;
   try {
-    ex = await apiPost("/api/exercises", { id: editingId || undefined, name, muscles: tags });
+    ex = await apiPost("/api/exercises", {
+      id: editingId || undefined,
+      name,
+      muscles: tags,
+      bodyweight: !!state.picker.newBodyweight,
+      unit: state.picker.newUnit || "kg",
+    });
   } catch (e) {
     toast("Couldn't save exercise");
     return;
@@ -473,7 +503,8 @@ function delExercise(entryIdx) {
 function bumpField(entryIdx, setIdx, field, dir) {
   const entry = state.active.entries[entryIdx];
   const set = entry.sets[setIdx];
-  const steps = { reps: REPS_STEP, weight: WEIGHT_STEP, duration: DURATION_STEP, distance: DISTANCE_STEP };
+  const weightStep = loadUnit(exById(entry.exerciseId)) === "sec" ? TIME_STEP : WEIGHT_STEP;
+  const steps = { reps: REPS_STEP, weight: weightStep, duration: DURATION_STEP, distance: DISTANCE_STEP };
   const v = (set[field] || 0) + dir * steps[field];
   set[field] = Math.max(0, Math.round(v * 100) / 100);
   if (field === "duration" && isPaced(exById(entry.exerciseId))) {
@@ -743,12 +774,24 @@ function viewActive() {
 
 function entryCard(entry, ei) {
   const ex = exById(entry.exerciseId);
-  const w = state.active;
   const cardio = ex.type === "cardio";
-  // Hide the name for a cardio activity that just mirrors the routine (e.g. "Walk"),
-  // so it doesn't read twice. Strength names are always shown (and editable).
-  const showName = !(cardio && ex.name === w.routineName);
+  const pain = entry.pain;
+  const hasNote = entry.note && entry.note.length;
 
+  // --- Collapsed: one dense, tappable row (keeps the list compact) ---
+  if (!entry.expanded) {
+    const flags = `${pain ? `<span class="ec-flag" style="color:${heatColor(pain.level)}">⚠</span>` : ""}${hasNote ? `<span class="ec-flag">✎</span>` : ""}`;
+    return `<div class="ex-card">
+      <button class="ex-collapsed" data-act="toggle-expand" data-ei="${ei}">
+        <span class="ec-name">${ex.name}</span>
+        <span class="ec-summary">${entrySummary(ex, entry)}</span>
+        ${flags}
+        <span class="ec-chev">›</span>
+      </button>
+    </div>`;
+  }
+
+  // --- Expanded: full editor ---
   let bodyRows = "";
   if (cardio && isPaced(ex)) {
     const s = entry.sets[0];
@@ -770,12 +813,13 @@ function entryCard(entry, ei) {
       ${stepper(ei, 0, "distance", s.distance, "km")}
     </div></div>`;
   } else {
-    // Strength: optional weight+reps sets.
+    // Strength: optional sets. Bodyweight = reps only; else reps + load (kg/sec).
+    const unit = loadUnit(ex);
     const setRows = entry.sets.map((s, si) => `<div class="set-row">
       <span class="set-num tnum">${si + 1}</span>
       <div class="set-fields">
         ${stepper(ei, si, "reps", s.reps, "reps")}
-        ${stepper(ei, si, "weight", s.weight, "kg")}
+        ${ex.bodyweight ? "" : stepper(ei, si, "weight", s.weight, unit)}
       </div>
       <button class="set-del" data-act="del-set" data-ei="${ei}" data-si="${si}" aria-label="Remove set">×</button>
     </div>`).join("");
@@ -785,16 +829,20 @@ function entryCard(entry, ei) {
   const tagsHtml = (ex.muscles || []).length
     ? `<span class="ex-tags">${ex.muscles.map((m) => `<span class="ex-tag">${m}</span>`).join("")}</span>`
     : "";
-  const headHtml = showName
-    ? `<div class="ex-head">${cardio
-        ? `<span class="ex-name">${ex.name}</span>${tagsHtml}`
-        : `<button class="ex-name ex-name-edit" data-act="edit-ex" data-id="${ex.id}">${ex.name} <span class="edit-hint">✎</span></button>${tagsHtml}`}
+  // Hide a cardio name that just mirrors the routine title (e.g. "Walk").
+  const showName = !(cardio && ex.name === state.active.routineName);
+  const nameHtml = !showName
+    ? `<span class="ex-name" style="color:var(--muted-2);font-weight:600;">Session</span>`
+    : cardio
+      ? `<span class="ex-name">${ex.name}</span>${tagsHtml}`
+      : `<button class="ex-name ex-name-edit" data-act="edit-ex" data-id="${ex.id}">${ex.name} <span class="edit-hint">✎</span></button>${tagsHtml}`;
+  const headHtml = `<div class="ex-head">
+      <button class="ec-chev open" data-act="toggle-expand" data-ei="${ei}" aria-label="Collapse">›</button>
+      ${nameHtml}
       <button class="ex-del" data-act="del-ex" data-ei="${ei}" aria-label="Remove exercise">×</button>
-    </div>`
-    : "";
+    </div>`;
 
   // --- Pain (collapsible) ---
-  const pain = entry.pain;
   const painStyle = pain ? `background:${heatColor(pain.level)};color:#14171C;border-color:transparent;` : "";
   const painLabel = pain ? `${pain.cat} ${pain.level}` : "Pain";
   let painEditHtml = "";
@@ -812,12 +860,12 @@ function entryCard(entry, ei) {
     </div>`;
   }
 
-  const noteOpen = entry.noteOpen || (entry.note && entry.note.length);
+  const noteOpen = entry.noteOpen || hasNote;
   const noteHtml = noteOpen
     ? `<div class="ex-note-wrap"><input class="ex-note" data-act="ex-note" data-ei="${ei}" value="${escAttr(entry.note || "")}"></div>`
     : "";
 
-  return `<div class="ex-card">
+  return `<div class="ex-card expanded">
     ${headHtml}
     ${bodyRows}
     <div class="ex-actions">
@@ -855,7 +903,29 @@ function describeSet(ex, s) {
     const paceStr = s.pace ? ` · ${s.pace}` : "";
     return `${s.duration} min · ${s.distance} km${paceStr}`;
   }
-  return `${s.reps} × ${s.weight} kg`;
+  if (ex.bodyweight || s.weight == null) { return `${s.reps} reps`; }
+  return `${s.reps} × ${s.weight} ${loadUnit(ex)}`;
+}
+
+// One dense line summarizing an entry (shown when the card is collapsed).
+function entrySummary(ex, entry) {
+  if (ex.type === "cardio") {
+    const s = entry.sets[0] || {};
+    const paceStr = s.pace ? ` · ${s.pace}` : "";
+    return `${s.duration || 0} min · ${s.distance || 0} km${paceStr}`;
+  }
+  const n = entry.sets.length;
+  if (!n) { return "No sets — tap to add"; }
+  const reps = entry.sets.map((s) => s.reps).join("·");
+  const weights = entry.sets.map((s) => s.weight);
+  const uniform = weights.every((x) => x === weights[0]);
+  const u = loadUnit(ex);
+  const wStr = ex.bodyweight
+    ? ""
+    : uniform
+      ? ` · ${weights[0]}${u}`
+      : ` · ${Math.min(...weights)}–${Math.max(...weights)}${u}`;
+  return `${n} set${n > 1 ? "s" : ""} · ${reps} reps${wStr}`;
 }
 
 /* ---- Picker ---- */
@@ -921,6 +991,16 @@ function viewExerciseForm() {
         <input class="picker-search" style="margin:0;" placeholder="Add a new tag…" value="${escAttr(state.picker.newTagText || "")}" data-act="new-tag-text">
         <button class="chip" data-act="add-tag">Add</button>
       </div>
+
+      <div class="eyebrow" style="margin:20px 2px 10px;">Logging</div>
+      <div class="chip-row">
+        <button class="chip ${state.picker.newBodyweight ? "active" : ""}" data-act="toggle-bodyweight">Bodyweight (reps only)</button>
+      </div>
+      ${state.picker.newBodyweight ? "" : `<div class="chip-row" style="margin-top:8px;">
+        <span style="align-self:center;color:var(--muted);font-size:0.85rem;margin-right:2px;">Load unit:</span>
+        <button class="chip ${state.picker.newUnit !== "sec" ? "active" : ""}" data-act="set-unit" data-unit="kg">kg</button>
+        <button class="chip ${state.picker.newUnit === "sec" ? "active" : ""}" data-act="set-unit" data-unit="sec">sec (time)</button>
+      </div>`}
     </main>
     <div class="footer">
       <button class="btn btn-ghost" data-act="close-create">Back</button>
@@ -1091,6 +1171,7 @@ app.addEventListener("click", (e) => {
     case "pick": addExerciseToActive(t.dataset.id); break;
     case "set-cat": state.picker.cat = t.dataset.cat; render(); break;
     case "del-ex": delExercise(ei); break;
+    case "toggle-expand": toggleExpand(ei); break;
     case "add-set": addSet(ei); break;
     case "del-set": delSet(ei, si); break;
     case "pace": setPace(ei, t.dataset.pace); break;
@@ -1114,6 +1195,8 @@ app.addEventListener("click", (e) => {
     }
     case "toggle-tag": toggleNewTag(t.dataset.m); break;
     case "add-tag": addNewTag(state.picker.newTagText); break;
+    case "toggle-bodyweight": state.picker.newBodyweight = !state.picker.newBodyweight; render(); break;
+    case "set-unit": state.picker.newUnit = t.dataset.unit; render(); break;
     case "save-ex": saveExercise(); break;
     case "feel": state.active.feel = parseInt(t.dataset.v, 10); save(); render(); break;
     case "energy": state.active.energy = parseInt(t.dataset.v, 10); save(); render(); break;

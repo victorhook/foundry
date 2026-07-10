@@ -21,8 +21,10 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		throw error(400, 'Name required');
 	}
 	const muscles = parseMuscles(body);
+	const bodyweight = !!body.bodyweight;
+	const unit = body.unit === 'sec' ? 'sec' : 'kg';
 	if (body.id) {
-		return json(updateExercise(String(body.id), name, muscles));
+		return json(updateExercise(String(body.id), name, muscles, bodyweight, unit));
 	}
-	return json(createExercise(name, muscles));
+	return json(createExercise(name, muscles, bodyweight, unit));
 };
