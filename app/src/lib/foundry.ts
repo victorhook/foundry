@@ -752,11 +752,15 @@ function entryCard(entry, ei) {
   let bodyRows = "";
   if (cardio && isPaced(ex)) {
     const s = entry.sets[0];
-    const paceChip = (key, label) =>
-      `<button class="chip ${s.pace === key ? "active" : ""}" data-act="pace" data-ei="${ei}" data-pace="${key}">${label}</button>`;
+    const seg = (key, label) =>
+      `<button class="seg-btn ${s.pace === key ? "active" : ""}" data-act="pace" data-ei="${ei}" data-pace="${key}">${label}</button>`;
     bodyRows = `<div class="cardio-paced">
-      <div class="set-fields" style="max-width:220px;margin:0 auto;">${stepper(ei, 0, "duration", s.duration, "min")}</div>
-      <div class="chip-row" style="justify-content:center;">${paceChip("normal", "Normal")}${paceChip("fast", "Fast")}</div>
+      <div class="big-stepper">
+        <button class="big-step" data-act="dec" data-ei="${ei}" data-si="0" data-field="duration" aria-label="Less time">−</button>
+        <div class="big-val"><span class="tnum">${s.duration}</span><span class="big-unit">min</span></div>
+        <button class="big-step" data-act="inc" data-ei="${ei}" data-si="0" data-field="duration" aria-label="More time">+</button>
+      </div>
+      <div class="seg">${seg("normal", "Normal")}${seg("fast", "Fast")}</div>
       <div class="est-dist">≈ ${s.distance} km</div>
     </div>`;
   } else if (cardio) {
