@@ -28,22 +28,45 @@ unit tests, build, and e2e. Merge when it's green.
 
 ## Releasing to production
 
-One-time: copy `.deploy.env.example` → `.deploy.env` and fill in your VPS details.
-The `DEPLOY_USER` needs passwordless sudo for `systemctl restart foundry` (add a
-sudoers line for just that command).
-
-Then, from a clean `main`:
+**Pushing to `main` deploys automatically.** When a push to `main` passes CI
+(type-check, unit, build, e2e), the `deploy` job ships the build to the VPS and
+restarts the service. So the release flow is just:
 
 ```bash
-make deploy
+git push        # to main → CI runs → on green, auto-deploys
 ```
 
-This refuses to run on a dirty tree, runs the test gate, builds, `rsync`s the build
-to the VPS, installs production deps (rebuilding native modules), restarts the
-service, and tags the release (`release-YYYYMMDD-HHMMSS`).
+Work on a branch and open a PR when you want CI to run *without* deploying; only
+merges/pushes to `main` go live.
 
-Roll back by checking out an earlier tag and running `make deploy` again, or restore
-a DB backup (see `app/DEPLOY.md`).
+### One-time CD setup (GitHub → server)
+
+The deploy job authenticates with a dedicated SSH key stored as repo secrets.
+
+1. Generate a deploy keypair locally:
+   ```bash
+   ssh-keygen -t ed25519 -f deploy_key -N "" -C "foundry-ci-deploy"
+   ```
+2. Authorize the public key on the server (as the deploy user):
+   ```bash
+   ssh victor@<host> 'cat >> ~/.ssh/authorized_keys' < deploy_key.pub
+   ```
+3. Add repo secrets (GitHub → Settings → Secrets and variables → Actions), or via gh:
+   ```bash
+   gh secret set DEPLOY_SSH_KEY < deploy_key      # the PRIVATE key
+   gh secret set DEPLOY_HOST --body "<host>"
+   gh secret set DEPLOY_USER --body "victor"
+   ```
+4. Delete the local private key: `rm deploy_key deploy_key.pub`
+
+The deploy user still needs passwordless sudo for `systemctl restart foundry`
+(already configured by `app/deploy/setup.sh`).
+
+### Manual deploy (fallback)
+
+`make deploy` still works for a manual push from a clean tree (uses `.deploy.env`
+and tags a `release-*`). Roll back by restoring a DB backup (see `app/DEPLOY.md`)
+or re-deploying an earlier commit.
 
 ## First-time GitHub setup
 
