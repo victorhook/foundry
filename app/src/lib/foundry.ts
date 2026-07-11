@@ -610,6 +610,7 @@ function go(view) {
 
 /* ============ Render ============ */
 const app = document.getElementById("app");
+let prevView = null;
 
 function render() {
   let html = "";
@@ -624,6 +625,12 @@ function render() {
   else if (state.view === "photos") { html = viewPhotos(); }
   else if (state.view === "album") { html = viewAlbum(); }
   app.innerHTML = html;
+  // Play the entrance animation only when the view actually changes, so
+  // in-place updates (adding a set, toggling pain) don't re-animate everything.
+  if (state.view !== prevView && app.firstElementChild) {
+    app.firstElementChild.classList.add("view-enter");
+    prevView = state.view;
+  }
   if (state.view === "profile") { drawWeightChart(); }
 }
 

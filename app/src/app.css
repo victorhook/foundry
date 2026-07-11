@@ -556,6 +556,38 @@
   .sheet-actions { display: flex; gap: 10px; margin-top: 4px; }
   .sheet-actions .btn { flex: 1; padding: 14px; border-radius: 14px; font-weight: 800; }
 
+  /* ---------- Motion / polish ---------- */
+  /* View entrance: content fades + rises when the screen changes */
+  @keyframes viewEnter {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+  .view-enter main { animation: viewEnter 0.30s cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+  .view-enter .footer { animation: viewEnter 0.34s cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+
+  /* Overlays */
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+  @keyframes popIn { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+  .sheet-wrap { animation: fadeIn 0.2s ease both; }
+  .sheet { animation: sheetUp 0.32s cubic-bezier(0.22, 0.9, 0.26, 1) both; }
+  .lightbox { animation: fadeIn 0.22s ease both; }
+  .lightbox-img { animation: popIn 0.28s cubic-bezier(0.22, 0.9, 0.26, 1) both; }
+  .toast.show { animation: popIn 0.24s cubic-bezier(0.22, 0.9, 0.26, 1); }
+
+  /* Tap feedback — smooth press on the interactive surfaces */
+  .routine, .hcard, .album-card, .btn, .chip, .mini-chip, .seg-btn,
+  .iconbtn, .cal-day.has, .ex-collapsed, .step-btn, .big-step, .rpe-btn, .cal-nav {
+    transition: transform 0.11s ease, background-color 0.14s ease,
+      color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+  }
+  .routine:active, .hcard:active, .album-card:active,
+  .btn:active, .ex-collapsed:active { transform: scale(0.975); }
+  .chip:active, .mini-chip:active, .iconbtn:active { transform: scale(0.93); }
+
+  /* Selecting an effort/level/pace springs slightly */
+  .rpe-btn.sel, .seg-btn.active { transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.14s ease, color 0.14s ease; }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }

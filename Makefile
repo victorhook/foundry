@@ -2,7 +2,7 @@
 # Run `make help` for the list.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup dev test test-unit test-e2e check push deploy release
+.PHONY: help setup dev test test-unit test-e2e check push deploy release sync-photos
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -36,3 +36,6 @@ deploy: ## Test, build, ship to the VPS, tag the release
 	./scripts/deploy.sh
 
 release: deploy ## Alias for deploy
+
+sync-photos: ## Pull server photos to this computer (./photo-backup)
+	./scripts/sync-photos.sh

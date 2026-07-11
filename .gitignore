@@ -16,3 +16,6 @@ Thumbs.db
 
 # Saved Claude Code session transcripts (local only)
 .session-archive/
+
+# Locally-synced server photos
+/photo-backup/
