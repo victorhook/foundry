@@ -18,8 +18,11 @@ export default defineConfig({
 	},
 	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 	webServer: {
-		command: `rm -rf .e2e-data && npm run dev -- --port ${PORT} --strictPort`,
-		port: PORT,
+		// Bind Vite to IPv4 127.0.0.1 explicitly and poll that exact URL. Without
+		// --host, Vite binds "localhost" which resolves to IPv6 (::1) on CI runners
+		// while tests hit 127.0.0.1 → ERR_CONNECTION_REFUSED.
+		command: `rm -rf .e2e-data && npm run dev -- --port ${PORT} --strictPort --host 127.0.0.1`,
+		url: `http://127.0.0.1:${PORT}`,
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,
 		env: {
