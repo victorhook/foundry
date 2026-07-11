@@ -12,7 +12,8 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			$lib: path.resolve('./src/lib'),
-			'$env/dynamic/private': path.resolve('./tests/env-stub.ts')
+			'$env/dynamic/private': path.resolve('./tests/env-stub.ts'),
+			'$app/environment': path.resolve('./tests/app-env-stub.ts')
 		}
 	}
 });

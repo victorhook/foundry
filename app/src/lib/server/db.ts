@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { env } from '$env/dynamic/private';
+import { building } from '$app/environment';
 import { hashPassword } from './auth';
 
 const DB_PATH = env.DATABASE_PATH || 'data/foundry.db';
@@ -185,7 +186,7 @@ function seed() {
 				env.ADMIN_USER,
 				hashPassword(env.ADMIN_PASSWORD)
 			);
-		} else if (process.env.NODE_ENV === 'production') {
+		} else if (!building && process.env.NODE_ENV === 'production') {
 			throw new Error(
 				'No user exists yet and ADMIN_USER/ADMIN_PASSWORD are not set. ' +
 					'Set them in .env so the initial login can be created.'

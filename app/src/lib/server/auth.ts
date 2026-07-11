@@ -1,13 +1,15 @@
 import crypto from 'node:crypto';
 import { env } from '$env/dynamic/private';
+import { building } from '$app/environment';
 
 // A dev fallback keeps local runs working; production MUST set a real AUTH_SECRET.
 const DEV_FALLBACK_SECRET = 'dev-insecure-secret-change-me';
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 // Fail loud rather than run on a publicly-known secret (which would let anyone
-// forge session cookies).
-if (IS_PROD && (!env.AUTH_SECRET || env.AUTH_SECRET === DEV_FALLBACK_SECRET)) {
+// forge session cookies). Skipped during `building` — the build imports this
+// module to analyse routes, and env vars aren't (and shouldn't be) present then.
+if (!building && IS_PROD && (!env.AUTH_SECRET || env.AUTH_SECRET === DEV_FALLBACK_SECRET)) {
 	throw new Error(
 		'AUTH_SECRET must be set to a unique value in production ' +
 			'(generate one with `openssl rand -hex 32`). Refusing to start on the insecure dev fallback.'
