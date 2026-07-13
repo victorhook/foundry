@@ -134,6 +134,24 @@ const migrations: Array<(d: Database.Database) => void> = [
 			tags TEXT,
 			taken_at INTEGER,
 			created_at INTEGER NOT NULL
+		)`),
+	// v10 -> v11: reusable gym templates (pre-defined workouts with default sets).
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS workout_template (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			icon TEXT,
+			ord INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS template_entry (
+			id TEXT PRIMARY KEY,
+			template_id TEXT NOT NULL REFERENCES workout_template(id) ON DELETE CASCADE,
+			exercise_id TEXT NOT NULL,
+			ord INTEGER NOT NULL,
+			set_count INTEGER,
+			reps INTEGER,
+			weight REAL
 		)`)
 ];
 
@@ -321,12 +339,73 @@ export function getPhotos() {
 		}));
 }
 
+export function getTemplates() {
+	const tpls = db
+		.prepare('SELECT id, name, icon, ord FROM workout_template ORDER BY ord, created_at')
+		.all() as any[];
+	const entries = db
+		.prepare('SELECT template_id, exercise_id, set_count, reps, weight FROM template_entry ORDER BY ord')
+		.all() as any[];
+	const byTpl: Record<string, any[]> = {};
+	for (const e of entries) {
+		(byTpl[e.template_id] ||= []).push({
+			exerciseId: e.exercise_id,
+			setCount: e.set_count,
+			reps: e.reps,
+			weight: e.weight
+		});
+	}
+	return tpls.map((t) => ({
+		id: t.id,
+		name: t.name,
+		icon: t.icon || null,
+		entries: byTpl[t.id] || []
+	}));
+}
+
+function getTemplate(id: string) {
+	return getTemplates().find((t) => t.id === id) || null;
+}
+
+type TemplateInput = {
+	id?: string;
+	name: string;
+	icon?: string | null;
+	ord?: number;
+	entries: { exerciseId: string; setCount?: number | null; reps?: number | null; weight?: number | null }[];
+};
+
+export const saveTemplate = db.transaction((t: TemplateInput) => {
+	const id = t.id || uid();
+	const exists = db.prepare('SELECT id FROM workout_template WHERE id = ?').get(id);
+	if (exists) {
+		db.prepare('UPDATE workout_template SET name = ?, icon = ? WHERE id = ?').run(t.name, t.icon ?? null, id);
+		db.prepare('DELETE FROM template_entry WHERE template_id = ?').run(id);
+	} else {
+		db.prepare(
+			'INSERT INTO workout_template (id, name, icon, ord, created_at) VALUES (?, ?, ?, ?, ?)'
+		).run(id, t.name, t.icon ?? null, t.ord ?? 0, Date.now());
+	}
+	const ins = db.prepare(
+		'INSERT INTO template_entry (id, template_id, exercise_id, ord, set_count, reps, weight) VALUES (?, ?, ?, ?, ?, ?, ?)'
+	);
+	(t.entries || []).forEach((e, i) =>
+		ins.run(uid(), id, e.exerciseId, i, e.setCount ?? null, e.reps ?? null, e.weight ?? null)
+	);
+	return getTemplate(id);
+});
+
+export function deleteTemplate(id: string) {
+	db.prepare('DELETE FROM workout_template WHERE id = ?').run(id);
+}
+
 export function getAllData() {
 	return {
 		exercises: getExercises(),
 		painCategories: getPainCategories(),
 		muscleGroups: getMuscleGroups(),
 		workouts: getWorkouts(),
+		templates: getTemplates(),
 		profile: getProfile(),
 		bodyWeights: getBodyWeights(),
 		albums: getAlbums(),

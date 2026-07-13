@@ -59,6 +59,7 @@ function load() {
     painCategories: [],
     muscleGroups: SUGGESTED_MUSCLES.slice(),
     workouts: [],
+    templates: [],
     profile: { dob: null, height: null, gender: null },
     bodyWeights: [],
     albums: [],
@@ -313,6 +314,142 @@ function addExerciseToActive(id) {
   go("active");
 }
 
+/* ---- Templates ---- */
+// Start a session prefilled from a template: each exercise gets `setCount` sets
+// seeded with the template's default reps/weight (weight dropped for bodyweight).
+function startFromTemplate(t, ts) {
+  if (!t) { return; }
+  const backdated = ts && !isToday(ts);
+  const entries = t.entries.map((te) => {
+    const ex = exById(te.exerciseId);
+    const count = Math.max(1, te.setCount || 1);
+    const sets = [];
+    for (let i = 0; i < count; i++) {
+      const s = { reps: te.reps != null ? te.reps : DEFAULT_STRENGTH_SET.reps };
+      if (!ex.bodyweight) { s.weight = te.weight != null ? te.weight : DEFAULT_STRENGTH_SET.weight; }
+      sets.push(s);
+    }
+    return { exerciseId: te.exerciseId, sets };
+  });
+  state.active = {
+    id: uid(),
+    startedAt: backdated ? ts : Date.now(),
+    manual: !!backdated,
+    routineName: t.name,
+    entries,
+    feel: null,
+    energy: null,
+    pains: {},
+    notes: "",
+  };
+  if (entries.length) { setOnlyExpanded(entries.length - 1); }
+  go("active");
+  toast("Template loaded — adjust and finish");
+}
+
+function newTemplate() {
+  state.templateEdit = { id: null, name: "", icon: "", entries: [] };
+  go("tpledit");
+}
+
+function editTemplate(id) {
+  const t = state.templates.find((x) => x.id === id);
+  if (!t) { return; }
+  state.templateEdit = {
+    id: t.id,
+    name: t.name,
+    icon: t.icon || "",
+    entries: t.entries.map((e) => ({ ...e })),
+  };
+  go("tpledit");
+}
+
+// Build a template draft from the sets the user actually logged in a workout.
+function templateEntriesFromWorkout(w) {
+  return w.entries
+    .filter((en) => exById(en.exerciseId).type !== "cardio")
+    .map((en) => {
+      const sets = en.sets || [];
+      const first = sets[0] || {};
+      return {
+        exerciseId: en.exerciseId,
+        setCount: sets.length || 1,
+        reps: first.reps != null ? first.reps : DEFAULT_STRENGTH_SET.reps,
+        weight: first.weight != null ? first.weight : null,
+      };
+    });
+}
+
+function saveActiveAsTemplate() {
+  const w = state.active;
+  if (!w) { return; }
+  const entries = templateEntriesFromWorkout(w);
+  if (!entries.length) { toast("Add a gym exercise first"); return; }
+  state.templateEdit = { id: null, name: w.routineName && w.routineName !== "Workout" ? w.routineName : "", icon: "", entries };
+  state.templateReturn = "active";
+  go("tpledit");
+}
+
+function addExerciseToTemplate(id) {
+  const ex = exById(id);
+  const last = lastSetFor(id);
+  state.templateEdit.entries.push({
+    exerciseId: id,
+    setCount: 3,
+    reps: last && last.reps != null ? last.reps : DEFAULT_STRENGTH_SET.reps,
+    weight: ex.bodyweight ? null : (last && last.weight != null ? last.weight : DEFAULT_STRENGTH_SET.weight),
+  });
+  go("tpledit");
+}
+
+function delTplEntry(idx) {
+  state.templateEdit.entries.splice(idx, 1);
+  render();
+}
+
+function bumpTplField(idx, field, dir) {
+  const e = state.templateEdit.entries[idx];
+  const step = field === "weight" ? WEIGHT_STEP : 1;
+  const v = (e[field] || 0) + dir * step;
+  e[field] = Math.max(field === "setCount" ? 1 : 0, Math.round(v * 100) / 100);
+  render();
+}
+
+function setTplField(idx, field, value) {
+  const e = state.templateEdit.entries[idx];
+  const n = parseFloat(value);
+  e[field] = isNaN(n) ? (field === "setCount" ? 1 : 0) : Math.max(field === "setCount" ? 1 : 0, n);
+}
+
+async function saveTemplateEdit() {
+  const te = state.templateEdit;
+  const name = (te.name || "").trim();
+  if (!name) { toast("Name the template first"); return; }
+  if (!te.entries.length) { toast("Add at least one exercise"); return; }
+  let saved;
+  try {
+    saved = await apiPost("/api/templates", {
+      id: te.id || undefined,
+      name,
+      icon: te.icon || null,
+      entries: te.entries,
+    });
+  } catch (e) { toast("Couldn't save template"); return; }
+  const i = state.templates.findIndex((x) => x.id === saved.id);
+  if (i >= 0) { state.templates[i] = saved; } else { state.templates.push(saved); }
+  const back = state.templateReturn || "templates";
+  state.templateReturn = null;
+  state.templateEdit = null;
+  go(back);
+  toast(te.id ? "Template updated" : "Template saved ✓");
+}
+
+function deleteTemplateById(id) {
+  apiDelete("/api/templates", { id }).catch(() => {});
+  state.templates = state.templates.filter((t) => t.id !== id);
+  render();
+}
+
 /* ---- Strength sets (weight + reps, carried over) ---- */
 function addSet(entryIdx) {
   const entry = state.active.entries[entryIdx];
@@ -492,12 +629,15 @@ async function saveExercise() {
     state.exercises.push(ex);
   }
   const wasEditing = !!editingId;
+  const target = state.picker.target;
   state.picker.creating = false;
   state.picker.editingId = null;
   state.picker.newName = "";
   state.picker.newTags = [];
-  // Editing came from the active workout; creating adds the new exercise to it.
+  // Editing came from the active workout; creating adds the new exercise to
+  // wherever the picker was opened from (active workout or a template draft).
   if (wasEditing) { go("active"); }
+  else if (target === "template") { addExerciseToTemplate(ex.id); }
   else { addExerciseToActive(ex.id); }
 }
 
@@ -603,6 +743,7 @@ function cancelWorkout() {
 
 function go(view) {
   state.view = view;
+  state.menuOpen = false;
   save();
   render();
   window.scrollTo(0, 0);
@@ -615,7 +756,7 @@ let prevView = null;
 function render() {
   let html = "";
   if (state.view === "home") { html = viewHome(); }
-  else if (state.view === "newday") { html = viewNewDay(); }
+  else if (state.view === "choose") { html = viewChoose(); }
   else if (state.view === "active") { html = viewActive(); }
   else if (state.view === "picker") { html = viewPicker(); }
   else if (state.view === "finish") { html = viewFinish(); }
@@ -624,7 +765,9 @@ function render() {
   else if (state.view === "profile") { html = viewProfile(); }
   else if (state.view === "photos") { html = viewPhotos(); }
   else if (state.view === "album") { html = viewAlbum(); }
-  app.innerHTML = html;
+  else if (state.view === "templates") { html = viewTemplates(); }
+  else if (state.view === "tpledit") { html = viewTemplateEdit(); }
+  app.innerHTML = html + overlays();
   // Play the entrance animation only when the view actually changes, so
   // in-place updates (adding a set, toggling pain) don't re-animate everything.
   if (state.view !== prevView && app.firstElementChild) {
@@ -637,33 +780,60 @@ function render() {
 function header(opts) {
   const left = opts.back
     ? `<button class="back-btn" data-act="${opts.back}">‹ ${opts.backLabel || "Back"}</button>`
-    : `<div class="wordmark">found<span>ry</span></div>`;
+    : "";
   let right = "";
   if (opts.dateLabel) {
     right = `<div class="timer">📅 ${opts.dateLabel}</div>`;
   } else if (opts.action) {
     right = opts.action;
   } else if (!opts.back) {
-    right = `<div style="display:flex;gap:8px;">
-      <button class="iconbtn" data-act="photos" aria-label="Photos">\u{1F5BC}️</button>
-      <button class="iconbtn" data-act="profile" aria-label="Profile">\u{1F464}</button>
-      <button class="iconbtn" data-act="history" aria-label="History">\u{1F4D6}</button>
-      <button class="iconbtn" data-act="logout" aria-label="Sign out">⏻</button>
-    </div>`;
+    right = `<button class="iconbtn hamburger ${state.menuOpen ? "active" : ""}" data-act="menu-toggle" aria-label="Menu" aria-expanded="${!!state.menuOpen}">☰</button>`;
   }
   return `<header class="bar">${left}<div class="spacer"></div>${right}</header>`;
+}
+
+// Foldable navigation menu (replaces the row of top icons). Rendered as an
+// overlay so it sits above the current view; tapping the scrim closes it.
+function menuPanel() {
+  if (!state.menuOpen) { return ""; }
+  const item = (act, icon, label) =>
+    `<button class="menu-item" data-act="${act}"><span class="menu-ico">${icon}</span>${label}</button>`;
+  return `<div class="menu-scrim" data-act="menu-close">
+    <nav class="menu-panel" data-act="noop">
+      ${item("history", "\u{1F4D6}", "History")}
+      ${item("photos", "\u{1F5BC}️", "Photos")}
+      ${item("templates", "\u{1F4CB}", "Templates")}
+      ${item("profile", "\u{1F464}", "Profile")}
+      <div class="menu-sep"></div>
+      ${item("logout", "⏻", "Sign out")}
+    </nav>
+  </div>`;
+}
+
+// Generic centered confirmation dialog.
+function confirmModal() {
+  const c = state.confirm;
+  if (!c) { return ""; }
+  return `<div class="modal-scrim" data-act="confirm-cancel">
+    <div class="modal" data-act="noop">
+      <div class="modal-title">${escAttr(c.title)}</div>
+      ${c.body ? `<div class="modal-body">${escAttr(c.body)}</div>` : ""}
+      <div class="modal-actions">
+        <button class="btn btn-ghost" data-act="confirm-cancel">${escAttr(c.cancel || "Cancel")}</button>
+        <button class="btn ${c.danger ? "btn-danger" : "btn-primary"}" data-act="confirm-ok">${escAttr(c.ok || "OK")}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Global overlays layered on top of whatever view is showing.
+function overlays() {
+  return menuPanel() + confirmModal();
 }
 
 /* ---- Home ---- */
 function viewHome() {
   const recent = state.workouts.slice(-3).reverse();
-
-  const routinesHtml = state.routines.map((r) =>
-    `<button class="routine" data-act="start-routine" data-id="${r.id}">
-      <span class="r-icon">${r.icon}</span>
-      <span class="r-name">${r.name}</span>
-    </button>`
-  ).join("");
 
   const recentHtml = recent.length
     ? recent.map(historyCard).join("")
@@ -672,8 +842,6 @@ function viewHome() {
   return `<div class="app">
     ${header({})}
     <main>
-      <div class="routines">${routinesHtml}</div>
-
       ${calendarWidget()}
 
       <div class="section-head">
@@ -683,17 +851,31 @@ function viewHome() {
       ${recentHtml}
     </main>
     <div class="footer">
-      <button class="btn btn-primary" data-act="start-empty">+  Start empty workout</button>
+      <button class="btn btn-primary btn-lg" data-act="add-workout">+  Add workout</button>
     </div>
   </div>`;
 }
 
-// Category chooser for a backdated session (reached by tapping an empty calendar day).
-function viewNewDay() {
-  const ts = state.newDate;
-  const label = new Date(ts).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-  const routinesHtml = state.routines.map((r) =>
-    `<button class="routine" data-act="start-routine" data-id="${r.id}" data-date="${ts}">
+// Chooser reached from "Add workout" (today) or tapping an empty calendar day
+// (backdated — state.newDate holds the chosen day). Lists templates first, then
+// the basic activity types.
+function viewChoose() {
+  const ts = state.newDate;                       // null → today
+  const dateAttr = ts ? ` data-date="${ts}"` : "";
+  const label = ts
+    ? new Date(ts).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
+    : "Today";
+
+  const tplHtml = state.templates.length
+    ? `<div class="section-head"><span class="eyebrow">Templates</span>
+        <button class="back-btn" data-act="templates">Manage ›</button></div>
+       <div class="tpl-list">${state.templates.map((t) => templateChooseCard(t, dateAttr)).join("")}</div>`
+    : `<div class="section-head"><span class="eyebrow">Templates</span>
+        <button class="back-btn" data-act="new-template">+ New ›</button></div>
+       <div class="empty" style="padding:22px;">No templates yet — build one for one-tap gym days.</div>`;
+
+  const basicsHtml = state.routines.map((r) =>
+    `<button class="routine" data-act="start-routine" data-id="${r.id}"${dateAttr}>
       <span class="r-icon">${r.icon}</span>
       <span class="r-name">${r.name}</span>
     </button>`
@@ -702,12 +884,109 @@ function viewNewDay() {
   return `<div class="app">
     ${header({ back: "home", backLabel: "Home" })}
     <main>
-      <div class="section-head"><span class="eyebrow">Add session · ${label}</span></div>
-      <div class="routines">${routinesHtml}</div>
+      <div class="section-head"><span class="eyebrow">Add workout · ${label}</span></div>
+      ${tplHtml}
+      <div class="section-head"><span class="eyebrow">Basics</span></div>
+      <div class="routines">${basicsHtml}</div>
     </main>
     <div class="footer">
-      <button class="btn btn-primary" data-act="start-empty" data-date="${ts}">+  Empty workout</button>
+      <button class="btn btn-primary btn-lg" data-act="start-empty"${dateAttr}>+  Empty workout</button>
     </div>
+  </div>`;
+}
+
+function templateChooseCard(t, dateAttr) {
+  const n = t.entries.length;
+  return `<button class="tpl-card" data-act="start-template" data-id="${t.id}"${dateAttr}>
+    <span class="tpl-ico">${t.icon || "\u{1F4CB}"}</span>
+    <span class="tpl-body">
+      <span class="tpl-name">${escAttr(t.name)}</span>
+      <span class="tpl-meta">${n} exercise${n !== 1 ? "s" : ""}</span>
+    </span>
+    <span class="tpl-go">›</span>
+  </button>`;
+}
+
+/* ---- Templates manager ---- */
+function viewTemplates() {
+  const list = state.templates.map((t) => {
+    const n = t.entries.length;
+    const preview = t.entries.slice(0, 4).map((e) => escAttr(exById(e.exerciseId).name)).join(" · ");
+    return `<div class="tpl-card tpl-manage">
+      <button class="tpl-open" data-act="edit-template" data-id="${t.id}">
+        <span class="tpl-ico">${t.icon || "\u{1F4CB}"}</span>
+        <span class="tpl-body">
+          <span class="tpl-name">${escAttr(t.name)}</span>
+          <span class="tpl-meta">${n} exercise${n !== 1 ? "s" : ""}${preview ? " · " + preview : ""}</span>
+        </span>
+      </button>
+      <button class="tpl-del" data-act="del-template" data-id="${t.id}" aria-label="Delete template">×</button>
+    </div>`;
+  }).join("");
+
+  const body = state.templates.length
+    ? `<div class="tpl-list">${list}</div>`
+    : `<div class="empty">No templates yet. Build one, then start it in a tap from “Add workout”.</div>`;
+
+  return `<div class="app">
+    ${header({ back: "home", backLabel: "Home" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">Templates</span></div>
+      ${body}
+      <button class="add-ex-btn" data-act="new-template" style="margin-top:14px;">+  New template</button>
+    </main>
+  </div>`;
+}
+
+/* ---- Template editor ---- */
+function viewTemplateEdit() {
+  const te = state.templateEdit;
+  if (!te) { go("templates"); return ""; }
+
+  const rows = te.entries.map((e, i) => {
+    const ex = exById(e.exerciseId);
+    const tags = (ex.muscles || []).length
+      ? `<span class="ex-tags">${ex.muscles.map((m) => `<span class="ex-tag">${escAttr(m)}</span>`).join("")}</span>`
+      : "";
+    const unit = loadUnit(ex);
+    return `<div class="ex-card expanded">
+      <div class="ex-head">
+        <span class="ex-name">${escAttr(ex.name)}</span>${tags}
+        <button class="ex-del" data-act="del-tpl-entry" data-i="${i}" aria-label="Remove">×</button>
+      </div>
+      <div class="set-row"><div class="set-fields">
+        ${tplStepper(i, "setCount", e.setCount || 1, "sets")}
+        ${tplStepper(i, "reps", e.reps != null ? e.reps : DEFAULT_STRENGTH_SET.reps, "reps")}
+        ${ex.bodyweight ? "" : tplStepper(i, "weight", e.weight != null ? e.weight : DEFAULT_STRENGTH_SET.weight, unit)}
+      </div></div>
+    </div>`;
+  }).join("");
+
+  const editing = !!te.id;
+  return `<div class="app">
+    ${header({ back: "close-tpledit", backLabel: state.templateReturn === "active" ? "Workout" : "Templates" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">${editing ? "Edit template" : "New template"}</span></div>
+      <div class="tpl-name-row">
+        <input class="picker-search" style="margin:0;flex:0 0 3.2rem;text-align:center;" placeholder="🏋" value="${escAttr(te.icon || "")}" data-act="tpl-icon" maxlength="2" aria-label="Icon">
+        <input class="picker-search" style="margin:0;flex:1;" placeholder="Template name" value="${escAttr(te.name || "")}" data-act="tpl-name" autofocus>
+      </div>
+      ${rows}
+      <button class="add-ex-btn" data-act="add-tpl-ex" style="margin-top:12px;">+  Add exercise</button>
+    </main>
+    <div class="footer">
+      <button class="btn btn-primary" data-act="save-template">${editing ? "Save template" : "Create template"}</button>
+    </div>
+  </div>`;
+}
+
+function tplStepper(i, field, value, label) {
+  return `<div class="step-grp">
+    <span class="lbl">${label}</span>
+    <button class="step-btn" data-act="tpl-dec" data-i="${i}" data-field="${field}">−</button>
+    <input class="step-val tnum" type="number" inputmode="decimal" value="${value}"
+      data-act="tpl-setfield" data-i="${i}" data-field="${field}" aria-label="${label}">
+    <button class="step-btn" data-act="tpl-inc" data-i="${i}" data-field="${field}">+</button>
   </div>`;
 }
 
@@ -730,6 +1009,17 @@ function historyCard(w) {
   </button>`;
 }
 
+// ISO 8601 week number (weeks start Monday; week 1 contains the first Thursday).
+function isoWeek(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dow = (d.getDay() + 6) % 7;      // Mon=0 … Sun=6
+  d.setDate(d.getDate() - dow + 3);      // move to the Thursday of this week
+  const firstThursday = new Date(d.getFullYear(), 0, 4);
+  const ftDow = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - ftDow + 3);
+  return 1 + Math.round((d - firstThursday) / (7 * 86400000));
+}
+
 /* ---- Calendar widget ---- */
 function calendarWidget() {
   const { year, month } = state.cal;
@@ -741,19 +1031,31 @@ function calendarWidget() {
   const today = new Date();
   const thisMonth = today.getFullYear() === year && today.getMonth() === month;
 
-  let cells = ["M", "T", "W", "T", "F", "S", "S"].map((d) => `<div class="cal-dow">${d}</div>`).join("");
-  for (let i = 0; i < startDow; i++) { cells += `<div class="cal-day blank"></div>`; }
-  for (let day = 1; day <= daysInMonth; day++) {
-    const ws = byDay[year + "-" + month + "-" + day];
-    if (ws && ws.length) {
-      const maxFeel = Math.max(...ws.map((w) => w.feel || 0));
-      const color = maxFeel ? heatColor(maxFeel) : "var(--accent)";
-      const last = ws[ws.length - 1];
-      cells += `<button class="cal-day has" style="background:${color}" data-act="cal-day" data-id="${last.id}">${day}${ws.length > 1 ? `<span class="cal-multi">${ws.length}</span>` : ""}</button>`;
-    } else {
-      const todayCls = (thisMonth && today.getDate() === day) ? " today" : "";
-      const ts = new Date(year, month, day, 12).getTime();
-      cells += `<button class="cal-day${todayCls}" data-act="cal-new" data-date="${ts}">${day}</button>`;
+  // Header: an empty corner (over the week-number column) + the weekday labels.
+  let cells = `<div class="cal-wk cal-corner"></div>`;
+  cells += ["M", "T", "W", "T", "F", "S", "S"].map((d) => `<div class="cal-dow">${d}</div>`).join("");
+
+  const rows = Math.ceil((startDow + daysInMonth) / 7);
+  for (let r = 0; r < rows; r++) {
+    const rowFirstDay = 1 - startDow + r * 7;           // day-of-month at this row's Monday (may spill months)
+    cells += `<div class="cal-wk">${isoWeek(new Date(year, month, rowFirstDay))}</div>`;
+    for (let c = 0; c < 7; c++) {
+      const day = rowFirstDay + c;
+      if (day < 1 || day > daysInMonth) {
+        cells += `<div class="cal-day blank"></div>`;
+        continue;
+      }
+      const ws = byDay[year + "-" + month + "-" + day];
+      if (ws && ws.length) {
+        const maxFeel = Math.max(...ws.map((w) => w.feel || 0));
+        const color = maxFeel ? heatColor(maxFeel) : "var(--accent)";
+        const last = ws[ws.length - 1];
+        cells += `<button class="cal-day has" style="background:${color}" data-act="cal-day" data-id="${last.id}">${day}${ws.length > 1 ? `<span class="cal-multi">${ws.length}</span>` : ""}</button>`;
+      } else {
+        const todayCls = (thisMonth && today.getDate() === day) ? " today" : "";
+        const ts = new Date(year, month, day, 12).getTime();
+        cells += `<button class="cal-day${todayCls}" data-act="cal-new" data-date="${ts}">${day}</button>`;
+      }
     }
   }
 
@@ -831,7 +1133,10 @@ function entryCard(entry, ei) {
     bodyRows = `<div class="cardio-paced">
       <div class="big-stepper">
         <button class="big-step" data-act="dec" data-ei="${ei}" data-si="0" data-field="duration" aria-label="Less time">−</button>
-        <div class="big-val"><span class="tnum">${s.duration}</span><span class="big-unit">min</span></div>
+        <div class="big-val">
+          <input class="big-val-input tnum" type="number" inputmode="numeric" value="${s.duration}" data-act="setfield" data-ei="${ei}" data-si="0" data-field="duration" aria-label="Minutes">
+          <span class="big-unit">min</span>
+        </div>
         <button class="big-step" data-act="inc" data-ei="${ei}" data-si="0" data-field="duration" aria-label="More time">+</button>
       </div>
       <div class="seg">${seg("normal", "Normal")}${seg("fast", "Fast")}</div>
@@ -989,9 +1294,11 @@ function viewPicker() {
 
   const list = pickerExercises();
   const listHtml = list.length ? list.map(pickerItemHtml).join("") : `<div class="empty">No exercises yet — add one.</div>`;
+  const backTo = state.picker.backTo || "active";
+  const backLabel = backTo === "tpledit" ? "Template" : "Workout";
 
   return `<div class="app">
-    ${header({ back: "active", backLabel: "Workout" })}
+    ${header({ back: backTo, backLabel })}
     <main>
       <input class="picker-search" id="picker-q" placeholder="Search…" value="${escAttr(state.picker.q)}" data-act="search">
       ${cats.length > 1 ? `<div class="cat-row">${catHtml}</div>` : ""}
@@ -1108,6 +1415,10 @@ function viewFinish() {
         <span class="eyebrow">Notes</span>
         <textarea class="notes" id="notes" data-act="notes">${w.notes}</textarea>
       </div>
+
+      ${w.entries.some((en) => exById(en.exerciseId).type !== "cardio")
+        ? `<button class="text-btn" data-act="save-as-template" style="display:block;margin:6px auto 0;">＋ Save this as a template</button>`
+        : ""}
     </main>
     <div class="footer">
       <button class="btn btn-primary" data-act="save">Save workout</button>
@@ -1433,7 +1744,7 @@ function viewAlbum() {
     <div class="footer">
       <button class="btn btn-primary" data-act="pick-photo">＋  Add photo</button>
     </div>
-    <input type="file" accept="image/*" id="photo-file" data-act="photo-file" style="display:none">
+    <input type="file" accept="image/*" id="photo-file" data-act="photo-file" multiple style="display:none">
     ${lightbox}
     ${sheet}
   </div>`;
@@ -1456,15 +1767,22 @@ function photoLightbox() {
 
 function uploadSheet() {
   const u = state.pendingUpload;
+  const multi = u.files.length > 1;
+  const thumbs = u.previews
+    .map((src) => `<img class="sheet-thumb ${multi ? "" : "solo"}" src="${src}" alt="preview">`)
+    .join("");
+  const label = u.busy
+    ? "Uploading…"
+    : multi ? `Upload ${u.files.length} photos` : "Upload";
   return `<div class="sheet-wrap" data-act="cancel-upload">
     <div class="sheet" data-act="noop">
-      <div class="eyebrow" style="margin-bottom:12px;">New photo</div>
-      <img class="sheet-preview" src="${u.previewUrl}" alt="preview">
-      <input class="picker-search" placeholder="Caption (optional)" value="${escAttr(u.caption)}" data-act="up-caption">
+      <div class="eyebrow" style="margin-bottom:12px;">${multi ? u.files.length + " photos" : "New photo"}</div>
+      <div class="sheet-thumbs ${multi ? "multi" : ""}">${thumbs}</div>
+      <input class="picker-search" placeholder="Caption${multi ? " (applies to all)" : " (optional)"}" value="${escAttr(u.caption)}" data-act="up-caption">
       <input class="picker-search" placeholder="Tags, comma-separated (e.g. front, week 1)" value="${escAttr(u.tags)}" data-act="up-tags">
       <div class="sheet-actions">
         <button class="btn btn-ghost" data-act="cancel-upload">Cancel</button>
-        <button class="btn btn-primary" data-act="confirm-upload" ${u.busy ? "disabled style=opacity:0.5" : ""}>${u.busy ? "Uploading…" : "Upload"}</button>
+        <button class="btn btn-primary" data-act="confirm-upload" ${u.busy ? "disabled style=opacity:0.5" : ""}>${label}</button>
       </div>
     </div>
   </div>`;
@@ -1476,10 +1794,11 @@ function pickPhoto() {
   const el = document.getElementById("photo-file");
   if (el) { el.click(); }
 }
-function onPhotoFile(file) {
-  if (!file) { return; }
-  const url = URL.createObjectURL(file);
-  state.pendingUpload = { file, previewUrl: url, caption: "", tags: "", busy: false };
+function onPhotoFile(files) {
+  const arr = Array.from(files || []).filter((f) => f && f.type && f.type.startsWith("image/"));
+  if (!arr.length) { return; }
+  const previews = arr.map((f) => URL.createObjectURL(f));
+  state.pendingUpload = { files: arr, previews, caption: "", tags: "", busy: false };
   render();
 }
 function downscale(file) {
@@ -1505,28 +1824,33 @@ async function confirmUpload() {
   const u = state.pendingUpload;
   if (!u || u.busy) { return; }
   u.busy = true; render();
-  try {
-    const blob = await downscale(u.file);
-    const fd = new FormData();
-    fd.append("file", blob, "photo.jpg");
-    if (state.albumId && state.albumId !== "__all__") { fd.append("albumId", state.albumId); }
-    fd.append("caption", u.caption || "");
-    fd.append("tags", u.tags || "");
-    const r = await fetch("/api/photos", { method: "POST", body: fd });
-    if (!r.ok) { throw new Error("upload failed"); }
-    const photo = await r.json();
-    state.photos.unshift(photo);
-    URL.revokeObjectURL(u.previewUrl);
-    state.pendingUpload = null;
-    render();
-    toast("Photo added ✓");
-  } catch (e) {
-    u.busy = false; render();
-    toast("Upload failed");
+  const caption = u.caption || "";
+  const tags = u.tags || "";
+  const total = u.files.length;
+  let ok = 0;
+  for (const file of u.files) {
+    try {
+      const blob = await downscale(file);
+      const fd = new FormData();
+      fd.append("file", blob, "photo.jpg");
+      if (state.albumId && state.albumId !== "__all__") { fd.append("albumId", state.albumId); }
+      fd.append("caption", caption);
+      fd.append("tags", tags);
+      const r = await fetch("/api/photos", { method: "POST", body: fd });
+      if (!r.ok) { throw new Error("upload failed"); }
+      state.photos.unshift(await r.json());
+      ok++;
+    } catch (e) { /* keep going with the rest of the batch */ }
   }
+  u.previews.forEach((p) => URL.revokeObjectURL(p));
+  state.pendingUpload = null;
+  render();
+  if (ok === total) { toast(total > 1 ? total + " photos added ✓" : "Photo added ✓"); }
+  else if (ok) { toast(ok + " of " + total + " uploaded"); }
+  else { toast("Upload failed"); }
 }
 function cancelUpload() {
-  if (state.pendingUpload) { URL.revokeObjectURL(state.pendingUpload.previewUrl); }
+  if (state.pendingUpload) { state.pendingUpload.previews.forEach((p) => URL.revokeObjectURL(p)); }
   state.pendingUpload = null;
   render();
 }
@@ -1546,7 +1870,20 @@ app.addEventListener("click", (e) => {
   const si = t.dataset.si !== undefined ? parseInt(t.dataset.si, 10) : null;
 
   switch (act) {
-    case "logout": window.location.href = "/logout"; break;
+    case "menu-toggle": state.menuOpen = !state.menuOpen; render(); break;
+    case "menu-close": state.menuOpen = false; render(); break;
+    case "logout":
+      state.menuOpen = false;
+      state.confirm = {
+        title: "Sign out?",
+        body: "You'll be logged out of Foundry.",
+        ok: "Sign out", danger: true,
+        onOk: () => { window.location.href = "/logout"; },
+      };
+      render();
+      break;
+    case "confirm-ok": { const c = state.confirm; state.confirm = null; if (c && c.onOk) { c.onOk(); } else { render(); } break; }
+    case "confirm-cancel": state.confirm = null; render(); break;
     case "history": go("history"); break;
     case "home": go("home"); break;
     case "active": go("active"); break;
@@ -1574,9 +1911,33 @@ app.addEventListener("click", (e) => {
     case "close-photo": state.viewPhotoId = null; render(); break;
     case "del-photo": deletePhotoById(t.dataset.id); break;
     case "noop": break;
+    case "add-workout": state.newDate = null; go("choose"); break;
     case "start-empty": startWorkout(null, t.dataset.date ? parseInt(t.dataset.date, 10) : undefined); break;
     case "start-routine": startWorkout(state.routines.find((r) => r.id === t.dataset.id), t.dataset.date ? parseInt(t.dataset.date, 10) : undefined); break;
-    case "open-picker": state.picker = { q: "", cat: "All" }; go("picker"); break;
+    case "start-template": startFromTemplate(state.templates.find((x) => x.id === t.dataset.id), t.dataset.date ? parseInt(t.dataset.date, 10) : undefined); break;
+    case "templates": go("templates"); break;
+    case "new-template": newTemplate(); break;
+    case "edit-template": editTemplate(t.dataset.id); break;
+    case "del-template": {
+      const id = t.dataset.id;
+      const tpl = state.templates.find((x) => x.id === id);
+      state.confirm = {
+        title: "Delete template?",
+        body: tpl ? tpl.name : "",
+        ok: "Delete", danger: true,
+        onOk: () => deleteTemplateById(id),
+      };
+      render();
+      break;
+    }
+    case "close-tpledit": { const back = state.templateReturn || "templates"; state.templateReturn = null; state.templateEdit = null; go(back); break; }
+    case "add-tpl-ex": state.picker = { q: "", cat: "All", target: "template", backTo: "tpledit" }; go("picker"); break;
+    case "del-tpl-entry": delTplEntry(parseInt(t.dataset.i, 10)); break;
+    case "tpl-inc": bumpTplField(parseInt(t.dataset.i, 10), t.dataset.field, +1); break;
+    case "tpl-dec": bumpTplField(parseInt(t.dataset.i, 10), t.dataset.field, -1); break;
+    case "save-template": saveTemplateEdit(); break;
+    case "save-as-template": saveActiveAsTemplate(); break;
+    case "open-picker": state.picker = { q: "", cat: "All", target: "active", backTo: "active" }; go("picker"); break;
     case "open-finish": go("finish"); break;
     case "cancel":
       if (confirm("Discard this workout? Nothing will be saved.")) { cancelWorkout(); }
@@ -1624,7 +1985,7 @@ app.addEventListener("click", (e) => {
     case "cal-prev": calShift(-1); break;
     case "cal-next": calShift(+1); break;
     case "cal-day": state.detailId = t.dataset.id; go("detail"); break;
-    case "cal-new": state.newDate = parseInt(t.dataset.date, 10); go("newday"); break;
+    case "cal-new": state.newDate = parseInt(t.dataset.date, 10); go("choose"); break;
   }
 });
 
@@ -1646,6 +2007,9 @@ app.addEventListener("input", (e) => {
   else if (act === "up-tags") { if (state.pendingUpload) { state.pendingUpload.tags = t.value; } }
   else if (act === "ex-pain-new-text") { state.active.entries[parseInt(t.dataset.ei, 10)].painNewText = t.value; }
   else if (act === "finish-pain-new-text") { state.active.painNewText = t.value; }
+  else if (act === "tpl-name") { state.templateEdit.name = t.value; }
+  else if (act === "tpl-icon") { state.templateEdit.icon = t.value; }
+  else if (act === "tpl-setfield") { setTplField(parseInt(t.dataset.i, 10), t.dataset.field, t.value); }
   else if (act === "wdate" && t.value) {
     const [y, m, d] = t.value.split("-").map(Number);
     state.active.startedAt = new Date(y, m - 1, d, 12).getTime();
@@ -1653,7 +2017,15 @@ app.addEventListener("input", (e) => {
     save();
   }
   else if (act === "setfield") {
-    setField(parseInt(t.dataset.ei, 10), parseInt(t.dataset.si, 10), t.dataset.field, t.value);
+    const ei = parseInt(t.dataset.ei, 10), si = parseInt(t.dataset.si, 10);
+    setField(ei, si, t.dataset.field, t.value);
+    // Walk distance is derived from the typed duration; refresh the estimate in
+    // place so we don't re-render (which would steal focus from the input).
+    const entry = state.active && state.active.entries[ei];
+    if (entry && t.dataset.field === "duration" && isPaced(exById(entry.exerciseId))) {
+      const est = t.closest(".ex-card") && t.closest(".ex-card").querySelector(".est-dist");
+      if (est) { est.textContent = "≈ " + entry.sets[si].distance + " km"; }
+    }
   }
 });
 
@@ -1661,8 +2033,8 @@ app.addEventListener("input", (e) => {
 app.addEventListener("change", (e) => {
   const t = e.target.closest("[data-act]");
   if (t && t.dataset.act === "photo-file") {
-    onPhotoFile(t.files && t.files[0]);
-    t.value = ""; // allow re-picking the same file
+    onPhotoFile(t.files);
+    t.value = ""; // allow re-picking the same file(s)
   }
 });
 
@@ -1678,8 +2050,12 @@ function updatePickerList() {
 }
 
 /* ============ Boot ============ */
+const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit"];
 async function boot() {
   if (state.view === "active" && !state.active) { state.view = "home"; }
+  // Transient editor views depend on ephemeral (non-persisted) state; a reload
+  // lands them safely. Also maps any legacy view name (e.g. "newday") home.
+  if (!KNOWN_VIEWS.includes(state.view) || state.view === "tpledit") { state.view = "home"; }
   render(); // paint immediately from draft (offline-friendly)
   try {
     const data = await apiGet("/api/data");
@@ -1687,6 +2063,7 @@ async function boot() {
     state.painCategories = data.painCategories;
     state.muscleGroups = data.muscleGroups || [];
     state.workouts = data.workouts;
+    state.templates = data.templates || [];
     state.profile = data.profile || state.profile;
     state.bodyWeights = data.bodyWeights || [];
     state.albums = data.albums || [];
