@@ -693,3 +693,63 @@
   }
   .tpl-del:active { color: var(--hot); background: var(--surface-2); }
   .tpl-name-row { display: flex; gap: 8px; align-items: center; }
+
+  /* ---------- Nutrition ---------- */
+  .daynav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+  .daynav-center { position: relative; flex: 1; display: flex; justify-content: center; align-items: center; min-height: 34px; }
+  .daynav-label { font-weight: 700; font-size: 1rem; }
+  .daynav-date { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: none; background: none; }
+
+  .nutri-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 18px; }
+  .nutri-kcal { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .kcal-block { min-width: 0; }
+  .kcal-num { font-size: 2.3rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
+  .kcal-cap { color: var(--muted); font-size: 0.85rem; margin-top: 5px; }
+  .kcal-target { color: var(--muted); }
+
+  .bar { height: 7px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin-top: 6px; }
+  .bar.big { height: 9px; margin-top: 12px; }
+  .bar-fill { height: 100%; border-radius: 999px; transition: width 0.35s cubic-bezier(0.22, 0.8, 0.28, 1); }
+
+  .macro-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 16px; }
+  .macro-top { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; margin-bottom: 3px; }
+  .macro-lbl { font-size: 0.68rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .macro-val { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .macro-val.over { color: var(--hot); }
+
+  .nutri-slot { margin-bottom: 16px; }
+  .slot-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 8px; }
+  .slot-title { font-weight: 700; font-size: 1.02rem; }
+  .slot-kcal { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+  .entry {
+    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 6px; text-align: left;
+  }
+  .entry:active { background: var(--surface-2); }
+  .entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .entry-qty { color: var(--muted); font-weight: 600; }
+  .entry-kcal { color: var(--text); font-weight: 700; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .slot-actions { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
+  .slot-add { flex: 1; padding: 11px; font-size: 0.9rem; }
+
+  .food-list { display: flex; flex-direction: column; gap: 6px; }
+  .food-list > .pick-food-main { border: 1px solid var(--line); border-radius: 12px; }
+  .pick-food { display: flex; align-items: stretch; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 6px; }
+  .pick-food-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; padding: 12px 14px; text-align: left; background: var(--surface); }
+  .pick-food-main:active { background: var(--surface-2); }
+  .pf-name { font-weight: 600; }
+  .pf-macro { font-size: 0.8rem; color: var(--muted); }
+  .pf-edit { flex-shrink: 0; width: 46px; color: var(--muted-2); border-left: 1px solid var(--line); font-size: 1rem; display: grid; place-items: center; }
+  .pf-edit:active { color: var(--accent); background: var(--surface-2); }
+
+  .meal-chooser { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+
+  /* Hide native number spinners on text-style numeric inputs (match .step-val) */
+  .picker-search[type="number"] { -moz-appearance: textfield; }
+  .picker-search[type="number"]::-webkit-outer-spin-button,
+  .picker-search[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  .seg.wrap { flex-wrap: wrap; }
+  .set-fields.wrap { flex-wrap: wrap; }
+  .step-grp.narrow { flex: 1 1 40%; }

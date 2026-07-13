@@ -152,7 +152,52 @@ const migrations: Array<(d: Database.Database) => void> = [
 			set_count INTEGER,
 			reps INTEGER,
 			weight REAL
-		)`)
+		)`),
+	// v11 -> v12: nutrition — food library, saved meals, and the daily diary.
+	// Macros (kcal/protein/carbs/fat) are stored PER SERVING; a logged entry
+	// multiplies by qty. Names + macros are snapshotted onto meal_item/food_log
+	// so editing or deleting a food never rewrites saved meals or past days.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS food (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			serving TEXT,
+			kcal REAL, protein REAL, carbs REAL, fat REAL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS meal (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			icon TEXT,
+			created_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS meal_item (
+			id TEXT PRIMARY KEY,
+			meal_id TEXT NOT NULL REFERENCES meal(id) ON DELETE CASCADE,
+			food_id TEXT,
+			ord INTEGER NOT NULL,
+			qty REAL NOT NULL DEFAULT 1,
+			name TEXT NOT NULL,
+			kcal REAL, protein REAL, carbs REAL, fat REAL
+		);
+		CREATE TABLE IF NOT EXISTS food_log (
+			id TEXT PRIMARY KEY,
+			day TEXT NOT NULL,
+			slot TEXT NOT NULL,
+			ord INTEGER NOT NULL,
+			food_id TEXT,
+			qty REAL NOT NULL DEFAULT 1,
+			name TEXT NOT NULL,
+			kcal REAL, protein REAL, carbs REAL, fat REAL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_food_log_day ON food_log(day)`),
+	// v12 -> v13: optional daily nutrition targets on the single-row profile.
+	(d) =>
+		d.exec(`ALTER TABLE profile ADD COLUMN kcal_target REAL;
+		ALTER TABLE profile ADD COLUMN protein_target REAL;
+		ALTER TABLE profile ADD COLUMN carbs_target REAL;
+		ALTER TABLE profile ADD COLUMN fat_target REAL`)
 ];
 
 function migrate() {
@@ -309,8 +354,30 @@ export function getWorkouts() {
 }
 
 export function getProfile() {
-	const r = db.prepare('SELECT dob, height, gender FROM profile WHERE id = 1').get() as any;
-	return r || { dob: null, height: null, gender: null };
+	const r = db
+		.prepare('SELECT dob, height, gender, kcal_target, protein_target, carbs_target, fat_target FROM profile WHERE id = 1')
+		.get() as any;
+	const base = r || { dob: null, height: null, gender: null };
+	return {
+		dob: base.dob ?? null,
+		height: base.height ?? null,
+		gender: base.gender ?? null,
+		targets: {
+			kcal: base.kcal_target ?? null,
+			protein: base.protein_target ?? null,
+			carbs: base.carbs_target ?? null,
+			fat: base.fat_target ?? null
+		}
+	};
+}
+
+export function saveTargets(t: { kcal: number | null; protein: number | null; carbs: number | null; fat: number | null }) {
+	db.prepare(
+		`INSERT INTO profile (id, kcal_target, protein_target, carbs_target, fat_target) VALUES (1, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET kcal_target = excluded.kcal_target, protein_target = excluded.protein_target,
+			carbs_target = excluded.carbs_target, fat_target = excluded.fat_target`
+	).run(t.kcal, t.protein, t.carbs, t.fat);
+	return getProfile();
 }
 
 export function getBodyWeights() {
@@ -399,6 +466,127 @@ export function deleteTemplate(id: string) {
 	db.prepare('DELETE FROM workout_template WHERE id = ?').run(id);
 }
 
+/* ---- Nutrition: food library ---- */
+const num = (v: any) => (v === null || v === undefined || v === '' ? null : Number(v));
+
+export function getFoods() {
+	return db
+		.prepare('SELECT id, name, serving, kcal, protein, carbs, fat FROM food ORDER BY name')
+		.all() as any[];
+}
+
+export function createFood(f: any) {
+	const id = uid();
+	db.prepare(
+		'INSERT INTO food (id, name, serving, kcal, protein, carbs, fat, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+	).run(id, f.name, f.serving ?? null, num(f.kcal), num(f.protein), num(f.carbs), num(f.fat), Date.now());
+	return db.prepare('SELECT id, name, serving, kcal, protein, carbs, fat FROM food WHERE id = ?').get(id);
+}
+
+export function updateFood(id: string, f: any) {
+	db.prepare('UPDATE food SET name = ?, serving = ?, kcal = ?, protein = ?, carbs = ?, fat = ? WHERE id = ?').run(
+		f.name, f.serving ?? null, num(f.kcal), num(f.protein), num(f.carbs), num(f.fat), id
+	);
+	return db.prepare('SELECT id, name, serving, kcal, protein, carbs, fat FROM food WHERE id = ?').get(id);
+}
+
+export function deleteFood(id: string) {
+	db.prepare('DELETE FROM food WHERE id = ?').run(id);
+}
+
+/* ---- Nutrition: saved meals (bundles of foods) ---- */
+export function getMeals() {
+	const meals = db.prepare('SELECT id, name, icon FROM meal ORDER BY name').all() as any[];
+	const items = db
+		.prepare('SELECT meal_id, food_id, qty, name, kcal, protein, carbs, fat FROM meal_item ORDER BY ord')
+		.all() as any[];
+	const byMeal: Record<string, any[]> = {};
+	for (const it of items) {
+		(byMeal[it.meal_id] ||= []).push({
+			foodId: it.food_id,
+			qty: it.qty,
+			name: it.name,
+			kcal: it.kcal,
+			protein: it.protein,
+			carbs: it.carbs,
+			fat: it.fat
+		});
+	}
+	return meals.map((m) => ({ id: m.id, name: m.name, icon: m.icon || null, items: byMeal[m.id] || [] }));
+}
+
+function getMeal(id: string) {
+	return getMeals().find((m) => m.id === id) || null;
+}
+
+export const saveMeal = db.transaction((m: any) => {
+	const id = m.id || uid();
+	const exists = db.prepare('SELECT id FROM meal WHERE id = ?').get(id);
+	if (exists) {
+		db.prepare('UPDATE meal SET name = ?, icon = ? WHERE id = ?').run(m.name, m.icon ?? null, id);
+		db.prepare('DELETE FROM meal_item WHERE meal_id = ?').run(id);
+	} else {
+		db.prepare('INSERT INTO meal (id, name, icon, created_at) VALUES (?, ?, ?, ?)').run(id, m.name, m.icon ?? null, Date.now());
+	}
+	const ins = db.prepare(
+		'INSERT INTO meal_item (id, meal_id, food_id, ord, qty, name, kcal, protein, carbs, fat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+	);
+	(m.items || []).forEach((it: any, i: number) =>
+		ins.run(uid(), id, it.foodId ?? null, i, num(it.qty) ?? 1, it.name, num(it.kcal), num(it.protein), num(it.carbs), num(it.fat))
+	);
+	return getMeal(id);
+});
+
+export function deleteMeal(id: string) {
+	db.prepare('DELETE FROM meal WHERE id = ?').run(id);
+}
+
+/* ---- Nutrition: daily diary ---- */
+export function getFoodLog(day: string) {
+	return db
+		.prepare('SELECT id, day, slot, ord, food_id, qty, name, kcal, protein, carbs, fat FROM food_log WHERE day = ? ORDER BY slot, ord, created_at')
+		.all(day)
+		.map((r: any) => ({
+			id: r.id, day: r.day, slot: r.slot, foodId: r.food_id, qty: r.qty,
+			name: r.name, kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat
+		}));
+}
+
+// Insert one or more entries into a day/slot. Returns the day's full log.
+export const addFoodLog = db.transaction((day: string, slot: string, entries: any[]) => {
+	const row = db.prepare('SELECT COALESCE(MAX(ord), -1) AS m FROM food_log WHERE day = ? AND slot = ?').get(day, slot) as any;
+	let ord = (row.m as number) + 1;
+	const ins = db.prepare(
+		'INSERT INTO food_log (id, day, slot, ord, food_id, qty, name, kcal, protein, carbs, fat, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+	);
+	for (const e of entries) {
+		ins.run(uid(), day, slot, ord++, e.foodId ?? null, num(e.qty) ?? 1, e.name, num(e.kcal), num(e.protein), num(e.carbs), num(e.fat), Date.now());
+	}
+	return getFoodLog(day);
+});
+
+export function updateFoodLog(id: string, patch: any) {
+	const cur = db.prepare('SELECT * FROM food_log WHERE id = ?').get(id) as any;
+	if (!cur) { return null; }
+	db.prepare('UPDATE food_log SET slot = ?, qty = ?, name = ?, kcal = ?, protein = ?, carbs = ?, fat = ? WHERE id = ?').run(
+		patch.slot ?? cur.slot,
+		patch.qty != null ? num(patch.qty) : cur.qty,
+		patch.name ?? cur.name,
+		patch.kcal !== undefined ? num(patch.kcal) : cur.kcal,
+		patch.protein !== undefined ? num(patch.protein) : cur.protein,
+		patch.carbs !== undefined ? num(patch.carbs) : cur.carbs,
+		patch.fat !== undefined ? num(patch.fat) : cur.fat,
+		id
+	);
+	return getFoodLog(cur.day);
+}
+
+export function deleteFoodLog(id: string) {
+	const cur = db.prepare('SELECT day FROM food_log WHERE id = ?').get(id) as any;
+	db.prepare('DELETE FROM food_log WHERE id = ?').run(id);
+	return cur ? getFoodLog(cur.day) : [];
+}
+
 export function getAllData() {
 	return {
 		exercises: getExercises(),
@@ -406,6 +594,8 @@ export function getAllData() {
 		muscleGroups: getMuscleGroups(),
 		workouts: getWorkouts(),
 		templates: getTemplates(),
+		foods: getFoods(),
+		meals: getMeals(),
 		profile: getProfile(),
 		bodyWeights: getBodyWeights(),
 		albums: getAlbums(),

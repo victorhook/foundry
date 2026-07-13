@@ -202,3 +202,83 @@ test('multiple photos upload in one batch', async ({ page }) => {
 	await page.getByRole('button', { name: /Upload 2 photos/ }).click();
 	await expect(page.locator('.pgrid-img')).toHaveCount(2);
 });
+
+// Nutrition tests pin a unique day so the shared e2e DB doesn't mix their totals.
+async function openNutritionOn(page: Page, day: string) {
+	await menuNav(page, 'Nutrition');
+	await page.locator('[data-act="nutri-date"]').fill(day);
+}
+
+test('nutrition: targets, quick-add, custom food, edit qty, and persistence', async ({ page }) => {
+	await login(page);
+	await openNutritionOn(page, '2024-06-01');
+
+	// Set a daily calorie target.
+	await page.getByRole('button', { name: /Targets/ }).click();
+	await page.locator('[data-act="target-field"][data-field="kcal"]').fill('2000');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.locator('.kcal-cap')).toContainText('2000');
+
+	// Quick-add to Breakfast.
+	await page.locator('[data-act="add-food"][data-slot="breakfast"]').click();
+	await page.getByRole('button', { name: 'Quick add' }).click();
+	await page.locator('[data-act="quick-name"]').fill('Oatmeal');
+	await page.locator('[data-act="quick-field"][data-field="kcal"]').fill('300');
+	await page.getByRole('button', { name: /Add to Breakfast/ }).click();
+	await page.locator('.back-btn').click();
+	await expect(page.getByText('Oatmeal')).toBeVisible();
+	await expect(page.locator('.kcal-num')).toHaveText('300');
+
+	// Create a custom food and log it to Lunch.
+	await page.locator('[data-act="add-food"][data-slot="lunch"]').click();
+	await page.getByRole('button', { name: /New food/ }).click();
+	await page.locator('[data-act="food-field"][data-field="name"]').fill('Chicken breast');
+	await page.locator('[data-act="food-field"][data-field="kcal"]').fill('200');
+	await page.getByRole('button', { name: /Add food/ }).click();
+	await page.locator('[data-act="log-food"]').first().click();
+	await page.locator('.back-btn').click();
+	await expect(page.getByText('Chicken breast')).toBeVisible();
+	await expect(page.locator('.kcal-num')).toHaveText('500');
+
+	// Edit the oatmeal entry: qty 1 -> 2, totals recompute (300*2 + 200).
+	await page.getByText('Oatmeal').click();
+	await page.locator('[data-act="entry-qty-inc"]').click();
+	await page.locator('[data-act="entry-qty-inc"]').click();
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.locator('.kcal-num')).toHaveText('800');
+
+	// Reload: the day's entries come from SQLite.
+	await page.reload();
+	await expect(page.getByText('Oatmeal')).toBeVisible();
+	await expect(page.getByText('Chicken breast')).toBeVisible();
+	await expect(page.locator('.kcal-num')).toHaveText('800');
+});
+
+test('nutrition: build a saved meal and log it in one tap', async ({ page }) => {
+	await login(page);
+	await openNutritionOn(page, '2024-06-02');
+
+	// Need a food in the library first.
+	await page.locator('[data-act="add-food"][data-slot="breakfast"]').click();
+	await page.getByRole('button', { name: /New food/ }).click();
+	await page.locator('[data-act="food-field"][data-field="name"]').fill('Egg');
+	await page.locator('[data-act="food-field"][data-field="kcal"]').fill('70');
+	await page.getByRole('button', { name: /Add food/ }).click();
+
+	// Build a saved meal of two eggs.
+	await page.getByRole('button', { name: 'Meals' }).click();
+	await page.getByRole('button', { name: /New meal/ }).click();
+	await page.locator('[data-act="meal-name"]').fill('Two eggs');
+	await page.getByRole('button', { name: /Add food/ }).click();
+	// The shared e2e DB may hold other foods; pick Egg specifically, twice.
+	const eggPick = page.locator('.meal-chooser [data-act="meal-add-food"]', { hasText: 'Egg' });
+	await eggPick.click();
+	await eggPick.click();
+	await page.getByRole('button', { name: /Create meal/ }).click();
+
+	// Log the meal in one tap; both items land in the day (2 × 70 = 140).
+	await page.locator('[data-act="log-meal"]').first().click();
+	await page.locator('.back-btn').click();
+	await expect(page.getByText('Egg').first()).toBeVisible();
+	await expect(page.locator('.kcal-num')).toHaveText('140');
+});
