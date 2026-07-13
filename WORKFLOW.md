@@ -28,11 +28,19 @@ unit tests, build, and e2e. Merge when it's green.
 
 ## Releasing to production
 
-One-time: copy `.deploy.env.example` → `.deploy.env` and fill in your VPS details.
-The `DEPLOY_USER` needs passwordless sudo for `systemctl restart foundry` (add a
-sudoers line for just that command).
+**Pushing to `main` deploys automatically.** Once the `test` job is green, the
+`deploy` job in `.github/workflows/ci.yml` ships to the VPS (rsyncs the build,
+installs prod deps, backs up the DB, restarts the service). Nothing to run by hand.
 
-Then, from a clean `main`:
+One-time GitHub setup: a `production` environment with these secrets —
+`DEPLOY_SSH_KEY` (private deploy key authorized on the VPS), `DEPLOY_HOST`,
+`DEPLOY_USER`, `DEPLOY_PATH`. The `DEPLOY_USER` needs passwordless sudo for
+`systemctl restart foundry`.
+
+### Manual fallback (`make deploy`)
+
+Still available from a clean `main` — useful for an out-of-band or emergency
+release without going through CI:
 
 ```bash
 make deploy

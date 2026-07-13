@@ -10,6 +10,8 @@ Thumbs.db
 .env.*
 !.env.example
 .deploy.env
+foundry-deploy
+foundry-deploy.pub
 
 # Editors
 .idea/
