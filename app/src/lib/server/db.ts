@@ -197,7 +197,14 @@ const migrations: Array<(d: Database.Database) => void> = [
 		d.exec(`ALTER TABLE profile ADD COLUMN kcal_target REAL;
 		ALTER TABLE profile ADD COLUMN protein_target REAL;
 		ALTER TABLE profile ADD COLUMN carbs_target REAL;
-		ALTER TABLE profile ADD COLUMN fat_target REAL`)
+		ALTER TABLE profile ADD COLUMN fat_target REAL`),
+	// v13 -> v14: a workout "theme" (e.g. "Shoulders", "Knee rehab") + a reusable bank.
+	(d) =>
+		d.exec(`ALTER TABLE workout ADD COLUMN theme TEXT;
+		CREATE TABLE IF NOT EXISTS workout_theme (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL
+		)`)
 ];
 
 function migrate() {
@@ -304,9 +311,28 @@ export function getMuscleGroups(): string[] {
 		.map((r: any) => r.name);
 }
 
+export function getWorkoutThemes(): string[] {
+	return db
+		.prepare('SELECT name FROM workout_theme ORDER BY name')
+		.all()
+		.map((r: any) => r.name);
+}
+
+function rememberTheme(name: string) {
+	const n = (name || '').trim();
+	if (n) {
+		db.prepare('INSERT OR IGNORE INTO workout_theme (name) VALUES (?)').run(n);
+	}
+}
+
+export function createWorkoutTheme(name: string): string {
+	rememberTheme(name);
+	return name.trim();
+}
+
 export function getWorkouts() {
 	const workouts = db
-		.prepare('SELECT id, started_at, routine_name, feel, energy, notes FROM workout ORDER BY started_at')
+		.prepare('SELECT id, started_at, routine_name, theme, feel, energy, notes FROM workout ORDER BY started_at')
 		.all() as any[];
 	const entries = db
 		.prepare('SELECT * FROM workout_entry ORDER BY ord')
@@ -345,6 +371,7 @@ export function getWorkouts() {
 		id: w.id,
 		startedAt: w.started_at,
 		routineName: w.routine_name,
+		theme: w.theme || null,
 		feel: w.feel,
 		energy: w.energy,
 		notes: w.notes || '',
@@ -353,9 +380,14 @@ export function getWorkouts() {
 	}));
 }
 
-// Move an existing workout to a different day (edits started_at only).
-export function updateWorkoutDate(id: string, startedAt: number) {
-	db.prepare('UPDATE workout SET started_at = ? WHERE id = ?').run(startedAt, id);
+// Edit an existing workout's date and/or theme.
+export function updateWorkout(id: string, patch: { startedAt?: number; theme?: string | null }) {
+	const cur = db.prepare('SELECT started_at, theme FROM workout WHERE id = ?').get(id) as any;
+	if (!cur) { return null; }
+	const startedAt = patch.startedAt != null ? patch.startedAt : cur.started_at;
+	const theme = patch.theme !== undefined ? ((patch.theme || '').trim() || null) : cur.theme;
+	db.prepare('UPDATE workout SET started_at = ?, theme = ? WHERE id = ?').run(startedAt, theme, id);
+	if (theme) { rememberTheme(theme); }
 	return getWorkouts().find((w) => w.id === id) || null;
 }
 
@@ -599,6 +631,7 @@ export function getAllData() {
 		painCategories: getPainCategories(),
 		muscleGroups: getMuscleGroups(),
 		workouts: getWorkouts(),
+		workoutThemes: getWorkoutThemes(),
 		templates: getTemplates(),
 		foods: getFoods(),
 		meals: getMeals(),
@@ -738,6 +771,7 @@ type SetInput = { duration?: number; distance?: number; pace?: string | null; re
 type WorkoutInput = {
 	startedAt: number;
 	routineName: string | null;
+	theme?: string | null;
 	feel: number | null;
 	energy: number | null;
 	notes: string;
@@ -749,9 +783,11 @@ const isStrengthSet = (s: SetInput) => s.reps != null || s.weight != null;
 
 export const createWorkout = db.transaction((w: WorkoutInput) => {
 	const id = uid();
+	const theme = (w.theme || '').trim() || null;
 	db.prepare(
-		'INSERT INTO workout (id, started_at, routine_name, feel, energy, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-	).run(id, w.startedAt, w.routineName, w.feel, w.energy, w.notes, Date.now());
+		'INSERT INTO workout (id, started_at, routine_name, theme, feel, energy, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+	).run(id, w.startedAt, w.routineName, theme, w.feel, w.energy, w.notes, Date.now());
+	if (theme) { rememberTheme(theme); }
 
 	const insEntry = db.prepare(
 		'INSERT INTO workout_entry (id, workout_id, exercise_id, ord, duration, distance, pace, note, pain_cat, pain_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -788,6 +824,7 @@ export const createWorkout = db.transaction((w: WorkoutInput) => {
 		id,
 		startedAt: w.startedAt,
 		routineName: w.routineName,
+		theme,
 		feel: w.feel,
 		energy: w.energy,
 		notes: w.notes,

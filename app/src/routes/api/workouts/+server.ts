@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { createWorkout, updateWorkoutDate } from '$lib/server/db';
+import { createWorkout, updateWorkout } from '$lib/server/db';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ locals, request }) => {
@@ -10,6 +10,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const workout = {
 		startedAt: Number(body.startedAt) || Date.now(),
 		routineName: body.routineName ?? null,
+		theme: body.theme ?? null,
 		feel: body.feel ?? null,
 		energy: body.energy ?? null,
 		notes: String(body.notes ?? ''),
@@ -19,18 +20,20 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	return json(createWorkout(workout));
 };
 
-// Change the date of an existing workout. Body: { id, startedAt }
+// Edit an existing workout's date and/or theme. Body: { id, startedAt?, theme? }
 export const PUT: RequestHandler = async ({ locals, request }) => {
 	if (!locals.userId) {
 		throw error(401, 'Not authenticated');
 	}
 	const b = await request.json();
 	const id = String(b.id ?? '');
-	const startedAt = Number(b.startedAt);
-	if (!id || !startedAt) {
-		throw error(400, 'id and startedAt required');
+	if (!id) {
+		throw error(400, 'id required');
 	}
-	const updated = updateWorkoutDate(id, startedAt);
+	const patch: { startedAt?: number; theme?: string | null } = {};
+	if (b.startedAt != null) { patch.startedAt = Number(b.startedAt); }
+	if (b.theme !== undefined) { patch.theme = b.theme; }
+	const updated = updateWorkout(id, patch);
 	if (!updated) {
 		throw error(404, 'Not found');
 	}

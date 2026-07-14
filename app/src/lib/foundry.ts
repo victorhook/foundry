@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { pushState, replaceState } from '$app/navigation';
+import { page } from '$app/stores';
 // Ported from the POC. Server holds the source of truth (exercises, pain
 // categories, workouts); localStorage only keeps a draft of the in-progress
 // session + current view so an accidental refresh at the gym isn't lost.
@@ -59,6 +61,7 @@ function load() {
     painCategories: [],
     muscleGroups: SUGGESTED_MUSCLES.slice(),
     workouts: [],
+    workoutThemes: [],
     templates: [],
     foods: [],
     meals: [],
@@ -326,7 +329,7 @@ function addExerciseToActive(id) {
   state.active.entries.push(newEntry(exById(id)));
   setOnlyExpanded(state.active.entries.length - 1);
   save();
-  go("active");
+  history.back();   // pop the picker off the stack, back to the workout
 }
 
 // Move a saved workout to a different day (edit its date from the detail screen).
@@ -429,7 +432,7 @@ function addExerciseToTemplate(id) {
     reps: last && last.reps != null ? last.reps : DEFAULT_STRENGTH_SET.reps,
     weight: ex.bodyweight ? null : (last && last.weight != null ? last.weight : DEFAULT_STRENGTH_SET.weight),
   });
-  go("tpledit");
+  history.back();   // pop the picker, back to the template editor
 }
 
 function delTplEntry(idx) {
@@ -467,10 +470,9 @@ async function saveTemplateEdit() {
   } catch (e) { toast("Couldn't save template"); return; }
   const i = state.templates.findIndex((x) => x.id === saved.id);
   if (i >= 0) { state.templates[i] = saved; } else { state.templates.push(saved); }
-  const back = state.templateReturn || "templates";
   state.templateReturn = null;
   state.templateEdit = null;
-  go(back);
+  history.back();   // pop the editor, back to where it was opened from
   toast(te.id ? "Template updated" : "Template saved ✓");
 }
 
@@ -537,6 +539,52 @@ function addPainCategory(name) {
     apiPost("/api/pain-categories", { name: n }).catch(() => {});
   }
   return n;
+}
+
+/* ---- Workout theme (a reusable "Shoulders" / "Knee rehab" label) ---- */
+function addWorkoutTheme(name) {
+  const n = (name || "").trim();
+  if (!n) { return null; }
+  if (!state.workoutThemes.includes(n)) {
+    state.workoutThemes.push(n);
+    state.workoutThemes.sort((a, b) => a.localeCompare(b));
+    apiPost("/api/workout-themes", { name: n }).catch(() => {});
+  }
+  return n;
+}
+function setActiveTheme(theme) {
+  const w = state.active;
+  w.theme = w.theme === theme ? null : theme;
+  save();
+  render();
+}
+function openFinishThemeNew() { state.active.themeNewOpen = true; render(); }
+function addFinishThemeNew() {
+  const w = state.active;
+  const th = addWorkoutTheme(w.themeNewText);
+  w.themeNewOpen = false;
+  w.themeNewText = "";
+  if (th) { w.theme = th; }
+  save();
+  render();
+}
+// Editing an existing workout's theme from the detail screen.
+async function changeWorkoutTheme(id, theme) {
+  const w = state.workouts.find((x) => x.id === id);
+  if (!w) { return; }
+  const next = w.theme === theme ? null : theme;
+  if (theme) { addWorkoutTheme(theme); }
+  w.theme = next;
+  render();
+  try { await apiPut("/api/workouts", { id, theme: next }); toast("Theme updated ✓"); }
+  catch (e) { toast("Couldn't update theme"); }
+}
+function openDetailThemeNew() { state.detailThemeNewOpen = true; render(); }
+function addDetailThemeNew(id) {
+  const th = addWorkoutTheme(state.detailThemeNewText);
+  state.detailThemeNewOpen = false;
+  state.detailThemeNewText = "";
+  if (th) { changeWorkoutTheme(id, th); } else { render(); }
 }
 
 /* ---- Per-exercise pain (single { cat, level } per exercise) ---- */
@@ -664,9 +712,9 @@ async function saveExercise() {
   state.picker.editingId = null;
   state.picker.newName = "";
   state.picker.newTags = [];
-  // Editing came from the active workout; creating adds the new exercise to
-  // wherever the picker was opened from (active workout or a template draft).
-  if (wasEditing) { go("active"); }
+  // Editing came from the active workout (pop back to it); creating adds the new
+  // exercise to wherever the picker was opened from (active workout / template).
+  if (wasEditing) { history.back(); }
   else if (target === "template") { addExerciseToTemplate(ex.id); }
   else { addExerciseToActive(ex.id); }
 }
@@ -738,6 +786,7 @@ async function finishWorkout() {
   const payload = {
     startedAt: w.startedAt,
     routineName: w.routineName,
+    theme: w.theme || null,
     feel: w.feel,
     energy: w.energy,
     notes: w.notes || "",
@@ -772,11 +821,25 @@ function cancelWorkout() {
 }
 
 function go(view) {
+  const changed = view !== state.view;
   state.view = view;
   state.menuOpen = false;
   save();
+  if (changed) { pushState("", { v: view }); }  // SvelteKit shallow routing → phone Back walks the stack
   render();
   window.scrollTo(0, 0);
+}
+
+// Close the top-most open overlay (drawer/sheet/modal). Returns true if it closed
+// one — used so the phone Back button dismisses overlays before navigating.
+function closeTopOverlay() {
+  if (state.viewPhotoId) { state.viewPhotoId = null; render(); return true; }
+  if (state.pendingUpload) { cancelUpload(); return true; }
+  if (state.confirm) { state.confirm = null; render(); return true; }
+  if (state.entryEdit) { state.entryEdit = null; render(); return true; }
+  if (state.targetEdit) { state.targetEdit = null; render(); return true; }
+  if (state.menuOpen) { state.menuOpen = false; render(); return true; }
+  return false;
 }
 
 /* ============ Render ============ */
@@ -812,32 +875,34 @@ function render() {
 }
 
 function header(opts) {
+  // Top-level screens (no back) show the drawer hamburger on the left; subviews
+  // show a Back button that pops the history stack (data-act nav-back). The
+  // exercise form is a special case that passes its own back act.
   const left = opts.back
-    ? `<button class="back-btn" data-act="${opts.back}">‹ ${opts.backLabel || "Back"}</button>`
-    : "";
+    ? `<button class="back-btn" data-act="${opts.backAct || "nav-back"}">‹ ${opts.backLabel || "Back"}</button>`
+    : `<button class="iconbtn hamburger ${state.menuOpen ? "active" : ""}" data-act="menu-toggle" aria-label="Menu" aria-expanded="${!!state.menuOpen}">☰</button>`;
   let right = "";
   if (opts.dateLabel) {
     right = `<div class="timer">📅 ${opts.dateLabel}</div>`;
   } else if (opts.action) {
     right = opts.action;
-  } else if (!opts.back) {
-    right = `<button class="iconbtn hamburger ${state.menuOpen ? "active" : ""}" data-act="menu-toggle" aria-label="Menu" aria-expanded="${!!state.menuOpen}">☰</button>`;
   }
   return `<header class="bar">${left}<div class="spacer"></div>${right}</header>`;
 }
 
-// Foldable navigation menu (replaces the row of top icons). Rendered as an
-// overlay so it sits above the current view; tapping the scrim closes it.
+// Slide-in navigation drawer (from the left). Opened by the hamburger or by a
+// swipe from the left edge; closed by tapping the scrim, swiping left, or Back.
 function menuPanel() {
   if (!state.menuOpen) { return ""; }
   const item = (act, icon, label) =>
     `<button class="menu-item" data-act="${act}"><span class="menu-ico">${icon}</span>${label}</button>`;
   return `<div class="menu-scrim" data-act="menu-close">
-    <nav class="menu-panel" data-act="noop">
+    <nav class="menu-panel drawer" data-act="noop">
+      <div class="drawer-head eyebrow">Foundry</div>
+      ${item("home", "\u{1F3E0}", "Home")}
       ${item("nutrition", "\u{1F34E}", "Nutrition")}
       ${item("history", "\u{1F4D6}", "History")}
       ${item("photos", "\u{1F5BC}️", "Photos")}
-      ${item("templates", "\u{1F4CB}", "Templates")}
       ${item("profile", "\u{1F464}", "Profile")}
       <div class="menu-sep"></div>
       ${item("logout", "⏻", "Sign out")}
@@ -917,7 +982,7 @@ function viewChoose() {
   ).join("");
 
   return `<div class="app">
-    ${header({ back: "home", backLabel: "Home" })}
+    ${header({ back: true, backLabel: "Home" })}
     <main>
       <div class="section-head"><span class="eyebrow">Add workout · ${label}</span></div>
       ${tplHtml}
@@ -964,7 +1029,7 @@ function viewTemplates() {
     : `<div class="empty">No templates yet. Build one, then start it in a tap from “Add workout”.</div>`;
 
   return `<div class="app">
-    ${header({ back: "home", backLabel: "Home" })}
+    ${header({ back: true, backLabel: "Home" })}
     <main>
       <div class="section-head"><span class="eyebrow">Templates</span></div>
       ${body}
@@ -999,7 +1064,7 @@ function viewTemplateEdit() {
 
   const editing = !!te.id;
   return `<div class="app">
-    ${header({ back: "close-tpledit", backLabel: state.templateReturn === "active" ? "Workout" : "Templates" })}
+    ${header({ back: true, backLabel: state.templateReturn === "active" ? "Workout" : "Templates" })}
     <main>
       <div class="section-head"><span class="eyebrow">${editing ? "Edit template" : "New template"}</span></div>
       <div class="tpl-name-row">
@@ -1034,11 +1099,13 @@ function historyCard(w) {
   const painCount = (w.pains || []).length + exPain;
   const exCount = w.entries.length;
   const exStr = exCount ? ` · ${exCount} exercise${exCount !== 1 ? "s" : ""}` : "";
+  const title = w.theme || w.routineName || "Workout";
+  const sub = w.theme && w.routineName ? `${w.routineName} · ` : "";
   return `<button class="hcard" data-act="detail" data-id="${w.id}">
     <div class="feel-badge tnum" style="${badgeStyle}">${feel || "–"}</div>
     <div class="h-body">
-      <div class="h-title">${w.routineName || "Workout"}</div>
-      <div class="h-meta">${fmtDate(w.startedAt)}${exStr}</div>
+      <div class="h-title">${escAttr(title)}</div>
+      <div class="h-meta">${sub}${fmtDate(w.startedAt)}${exStr}</div>
     </div>
     ${painCount ? `<span class="pain-flag">⚠ ${painCount}</span>` : ""}
   </button>`;
@@ -1149,7 +1216,8 @@ function entryCard(entry, ei) {
   // --- Collapsed: one dense, tappable row (keeps the list compact) ---
   if (!entry.expanded) {
     const flags = `${pain ? `<span class="ec-flag" style="color:${heatColor(pain.level)}">⚠</span>` : ""}${hasNote ? `<span class="ec-flag">✎</span>` : ""}`;
-    return `<div class="ex-card">
+    return `<div class="ex-card ec-row">
+      <span class="drag-handle" data-drag data-ei="${ei}" aria-label="Drag to reorder">⠿</span>
       <button class="ex-collapsed" data-act="toggle-expand" data-ei="${ei}">
         <span class="ec-name">${ex.name}</span>
         <span class="ec-summary">${entrySummary(ex, entry)}</span>
@@ -1208,6 +1276,7 @@ function entryCard(entry, ei) {
       ? `<span class="ex-name">${ex.name}</span>${tagsHtml}`
       : `<button class="ex-name ex-name-edit" data-act="edit-ex" data-id="${ex.id}">${ex.name} <span class="edit-hint">✎</span></button>${tagsHtml}`;
   const headHtml = `<div class="ex-head">
+      <span class="drag-handle" data-drag data-ei="${ei}" aria-label="Drag to reorder">⠿</span>
       <button class="ec-chev open" data-act="toggle-expand" data-ei="${ei}" aria-label="Collapse">›</button>
       ${nameHtml}
       <button class="ex-del" data-act="del-ex" data-ei="${ei}" aria-label="Remove exercise">×</button>
@@ -1333,7 +1402,7 @@ function viewPicker() {
   const backLabel = backTo === "tpledit" ? "Template" : "Workout";
 
   return `<div class="app">
-    ${header({ back: backTo, backLabel })}
+    ${header({ back: true, backLabel })}
     <main>
       <input class="picker-search" id="picker-q" placeholder="Search…" value="${escAttr(state.picker.q)}" data-act="search">
       ${cats.length > 1 ? `<div class="cat-row">${catHtml}</div>` : ""}
@@ -1354,7 +1423,7 @@ function viewExerciseForm() {
   ).join("");
 
   return `<div class="app">
-    ${header({ back: "close-create", backLabel: editing ? "Back" : "Cancel" })}
+    ${header({ back: true, backAct: "close-create", backLabel: editing ? "Back" : "Cancel" })}
     <main>
       <div class="section-head"><span class="eyebrow">${editing ? "Edit exercise" : "New exercise"}</span></div>
       <input class="picker-search" id="new-name" placeholder="Name" value="${escAttr(name)}" data-act="new-name" autofocus>
@@ -1422,7 +1491,7 @@ function viewFinish() {
   const painHtml = `<div class="chip-row">${painChips}${newHtml}</div>${painScale}`;
 
   return `<div class="app">
-    ${header({ back: "active", backLabel: "Workout" })}
+    ${header({ back: true, backLabel: "Workout" })}
     <main>
       <div class="section-head"><span class="eyebrow">Finish</span></div>
 
@@ -1430,6 +1499,21 @@ function viewFinish() {
         <span class="eyebrow">Date</span>
         <input class="date-input" type="date" value="${dateInputValue(w.startedAt)}" data-act="wdate">
       </div>
+
+      ${(() => {
+        const cardioOnly = w.entries.length > 0 && w.entries.every((en) => exById(en.exerciseId).type === "cardio");
+        if (cardioOnly) { return ""; }
+        const chips = state.workoutThemes.map((th) =>
+          `<button class="chip ${w.theme === th ? "active" : ""}" data-act="set-theme" data-theme="${escAttr(th)}">${th}</button>`
+        ).join("");
+        const newHtml = w.themeNewOpen
+          ? inlineNewField("theme-new-text", "theme-new-add", null, w.themeNewText || "", "New theme…")
+          : `<button class="chip" data-act="theme-new">+ New</button>`;
+        return `<div class="finish-block">
+          <span class="eyebrow">Theme <span style="color:var(--muted-2);font-weight:600;text-transform:none;letter-spacing:0;">· e.g. Shoulders, Knee rehab</span></span>
+          <div class="chip-row">${chips}${newHtml}</div>
+        </div>`;
+      })()}
 
       <div class="finish-block">
         <span class="eyebrow">Effort</span>
@@ -1468,7 +1552,7 @@ function viewHistory() {
     ? list.map(historyCard).join("")
     : `<div class="empty">No workouts logged yet.</div>`;
   return `<div class="app">
-    ${header({ back: "home", backLabel: "Home" })}
+    ${header({ back: true, backLabel: "Home" })}
     <main>
       <div class="section-head"><span class="eyebrow">All workouts · ${list.length}</span></div>
       ${body}
@@ -1511,13 +1595,27 @@ function viewDetail() {
     : "";
 
   return `<div class="app">
-    ${header({ back: "history", backLabel: "History" })}
+    ${header({ back: true, backLabel: "History" })}
     <main>
-      <div class="section-head"><span class="eyebrow">${w.routineName || "Workout"} · ${fmtDate(w.startedAt)}</span></div>
+      <div class="section-head"><span class="eyebrow">${w.routineName || "Workout"}${w.theme ? " · " + escAttr(w.theme) : ""} · ${fmtDate(w.startedAt)}</span></div>
       <div class="finish-block">
         <span class="eyebrow">Date</span>
         <input class="date-input" type="date" value="${dateInputValue(w.startedAt)}" data-act="detail-date" data-id="${w.id}">
       </div>
+      ${(() => {
+        const cardioOnly = w.entries.length > 0 && w.entries.every((en) => exById(en.exerciseId).type === "cardio");
+        if (cardioOnly) { return ""; }
+        const chips = state.workoutThemes.map((th) =>
+          `<button class="chip ${w.theme === th ? "active" : ""}" data-act="detail-theme" data-id="${w.id}" data-theme="${escAttr(th)}">${th}</button>`
+        ).join("");
+        const newHtml = state.detailThemeNewOpen
+          ? `<span class="inline-new"><input class="inline-new-input" data-act="detail-theme-new-text" value="${escAttr(state.detailThemeNewText || "")}" placeholder="New theme…" autofocus><button class="chip" data-act="detail-theme-new-add" data-id="${w.id}">Add</button></span>`
+          : `<button class="chip" data-act="detail-theme-new" data-id="${w.id}">+ New</button>`;
+        return `<div class="finish-block">
+          <span class="eyebrow">Theme</span>
+          <div class="chip-row">${chips}${newHtml}</div>
+        </div>`;
+      })()}
       <div class="detail-stat-row">
         <div class="dstat"><div class="v tnum" style="color:${w.feel ? heatColor(w.feel) : "var(--text)"}">${w.feel || "–"}</div><div class="k">Effort</div></div>
         <div class="dstat"><div class="v tnum">${w.entries.length}</div><div class="k">Exercises</div></div>
@@ -1589,7 +1687,7 @@ function viewProfile() {
   ).join("");
 
   return `<div class="app">
-    ${header({ back: "home", backLabel: "Home" })}
+    ${header({ back: true, backLabel: "Home" })}
     <main>
       <div class="section-head"><span class="eyebrow">Profile</span></div>
 
@@ -1719,7 +1817,7 @@ function viewPhotos() {
   const allCover = state.photos[0] ? state.photos[0].id : null;
 
   return `<div class="app">
-    ${header({ back: "home", backLabel: "Home" })}
+    ${header({ back: true, backLabel: "Home" })}
     <main>
       <div class="section-head">
         <span class="eyebrow">Photos</span>
@@ -1740,7 +1838,7 @@ function viewPhotos() {
 }
 
 function loadingShell(backLabel, backTarget) {
-  return `<div class="app">${header({ back: backTarget, backLabel })}<main></main></div>`;
+  return `<div class="app">${header({ back: true, backLabel })}<main></main></div>`;
 }
 
 function viewAlbum() {
@@ -1774,7 +1872,7 @@ function viewAlbum() {
   const sheet = state.pendingUpload ? uploadSheet() : "";
 
   return `<div class="app">
-    ${header({ back: "photos", backLabel: "Albums" })}
+    ${header({ back: true, backLabel: "Albums" })}
     <main>
       <div class="section-head"><span class="eyebrow">${album.name}</span></div>
       ${tagRow}
@@ -2019,9 +2117,8 @@ async function saveFoodEdit() {
   const i = state.foods.findIndex((x) => x.id === saved.id);
   if (i >= 0) { state.foods[i] = saved; } else { state.foods.push(saved); }
   state.foods.sort((a, b) => a.name.localeCompare(b.name));
-  const back = state.foodEditReturn || "addfood";
   state.foodEdit = null; state.foodEditReturn = null;
-  go(back);
+  history.back();   // pop the food editor, back to where it was opened from
   toast(f.id ? "Food updated" : "Food added ✓");
 }
 function deleteFoodById(id) {
@@ -2062,10 +2159,9 @@ async function saveMealEdit() {
   const i = state.meals.findIndex((x) => x.id === saved.id);
   if (i >= 0) { state.meals[i] = saved; } else { state.meals.push(saved); }
   state.meals.sort((a, b) => a.name.localeCompare(b.name));
-  const back = state.mealEditReturn || "addfood";
   const wasEditing = !!m.id;
   state.mealEdit = null; state.mealEditReturn = null;
-  go(back);
+  history.back();   // pop the meal editor, back to where it was opened from
   toast(wasEditing ? "Meal updated" : "Meal saved ✓");
 }
 function deleteMealById(id) {
@@ -2167,7 +2263,7 @@ function viewNutrition() {
   }).join("");
 
   return `<div class="app">
-    ${header({ back: "home", backLabel: "Home" })}
+    ${header({ back: true, backLabel: "Home" })}
     <main>
       <div class="daynav">
         <button class="cal-nav" data-act="nutri-prev" aria-label="Previous day">‹</button>
@@ -2240,7 +2336,7 @@ function viewAddFood() {
   }
 
   return `<div class="app">
-    ${header({ back: "nutrition", backLabel: title })}
+    ${header({ back: true, backLabel: title })}
     <main>
       <div class="section-head"><span class="eyebrow">Add · ${title}</span></div>
       <div class="seg" style="margin-bottom:14px;">${seg("foods", "Foods")}${seg("meals", "Meals")}${seg("quick", "Quick add")}</div>
@@ -2257,7 +2353,7 @@ function viewFoodEdit() {
     <input class="picker-search" ${attrs || 'type="text"'} value="${escAttr(f[k] == null ? "" : f[k])}" placeholder="${ph || ""}" data-act="food-field" data-field="${k}"></div>`;
   const numAttr = 'type="number" inputmode="decimal"';
   return `<div class="app">
-    ${header({ back: "close-foodedit", backLabel: "Back" })}
+    ${header({ back: true, backLabel: "Back" })}
     <main>
       <div class="section-head"><span class="eyebrow">${editing ? "Edit food" : "New food"}</span></div>
       ${field("Name", "name", "e.g. Greek yogurt")}
@@ -2305,7 +2401,7 @@ function viewMealEdit() {
     : `<button class="add-ex-btn" data-act="meal-add-open" style="margin-top:12px;">＋ Add food</button>`;
 
   return `<div class="app">
-    ${header({ back: "close-mealedit", backLabel: state.mealEditReturn === "nutrition" ? "Nutrition" : "Back" })}
+    ${header({ back: true, backLabel: state.mealEditReturn === "nutrition" ? "Nutrition" : "Back" })}
     <main>
       <div class="section-head"><span class="eyebrow">${editing ? "Edit meal" : "New meal"} · ${fmtNum(Math.round(tot.kcal))} kcal</span></div>
       <div class="tpl-name-row">
@@ -2384,6 +2480,7 @@ app.addEventListener("click", (e) => {
   const si = t.dataset.si !== undefined ? parseInt(t.dataset.si, 10) : null;
 
   switch (act) {
+    case "nav-back": history.back(); break;
     case "menu-toggle": state.menuOpen = !state.menuOpen; render(); break;
     case "menu-close": state.menuOpen = false; render(); break;
     case "logout":
@@ -2454,7 +2551,13 @@ app.addEventListener("click", (e) => {
     case "open-picker": state.picker = { q: "", cat: "All", target: "active", backTo: "active" }; go("picker"); break;
     case "open-finish": go("finish"); break;
     case "cancel":
-      if (confirm("Discard this workout? Nothing will be saved.")) { cancelWorkout(); }
+      state.confirm = {
+        title: "Discard workout?",
+        body: "Nothing will be saved.",
+        ok: "Discard", danger: true,
+        onOk: () => cancelWorkout(),
+      };
+      render();
       break;
     case "pick": addExerciseToActive(t.dataset.id); break;
     case "set-cat": state.picker.cat = t.dataset.cat; render(); break;
@@ -2475,10 +2578,12 @@ app.addEventListener("click", (e) => {
     case "ex-note-toggle": toggleExNote(ei); break;
     case "new-ex": openExerciseForm(null); break;
     case "close-create": {
+      // The exercise form is a sub-state of the picker list when created there
+      // (stay on picker); reached from another view (editing) it pops the stack.
       const ret = state.picker.editReturn || "picker";
       state.picker.creating = false;
       state.picker.editingId = null;
-      go(ret);
+      if (ret === "picker") { render(); } else { history.back(); }
       break;
     }
     case "toggle-tag": toggleNewTag(t.dataset.m); break;
@@ -2493,9 +2598,15 @@ app.addEventListener("click", (e) => {
     case "finish-pain-remove": removeFinishPain(); break;
     case "finish-pain-new": openFinishPainNew(); break;
     case "finish-pain-new-add": addFinishPainNew(); break;
+    case "set-theme": setActiveTheme(t.dataset.theme); break;
+    case "theme-new": openFinishThemeNew(); break;
+    case "theme-new-add": addFinishThemeNew(); break;
     case "save": finishWorkout(); break;
     case "repeat": repeatWorkout(state.workouts.find((x) => x.id === t.dataset.id)); break;
     case "detail": state.detailId = t.dataset.id; go("detail"); break;
+    case "detail-theme": changeWorkoutTheme(t.dataset.id, t.dataset.theme); break;
+    case "detail-theme-new": openDetailThemeNew(); break;
+    case "detail-theme-new-add": addDetailThemeNew(t.dataset.id); break;
     case "cal-prev": calShift(-1); break;
     case "cal-next": calShift(+1); break;
     case "cal-day": state.detailId = t.dataset.id; go("detail"); break;
@@ -2527,7 +2638,7 @@ app.addEventListener("click", (e) => {
         title: "Delete food?",
         body: food ? food.name : "",
         ok: "Delete", danger: true,
-        onOk: () => { deleteFoodById(id); const back = state.foodEditReturn || "addfood"; state.foodEdit = null; state.foodEditReturn = null; go(back); },
+        onOk: () => { deleteFoodById(id); state.foodEdit = null; state.foodEditReturn = null; history.back(); },
       };
       render();
       break;
@@ -2571,6 +2682,8 @@ app.addEventListener("input", (e) => {
   else if (act === "up-tags") { if (state.pendingUpload) { state.pendingUpload.tags = t.value; } }
   else if (act === "ex-pain-new-text") { state.active.entries[parseInt(t.dataset.ei, 10)].painNewText = t.value; }
   else if (act === "finish-pain-new-text") { state.active.painNewText = t.value; }
+  else if (act === "theme-new-text") { state.active.themeNewText = t.value; }
+  else if (act === "detail-theme-new-text") { state.detailThemeNewText = t.value; }
   else if (act === "tpl-name") { state.templateEdit.name = t.value; }
   else if (act === "tpl-icon") { state.templateEdit.icon = t.value; }
   else if (act === "tpl-setfield") { setTplField(parseInt(t.dataset.i, 10), t.dataset.field, t.value); }
@@ -2646,6 +2759,11 @@ async function boot() {
   // Transient editor views depend on ephemeral (non-persisted) state; a reload
   // lands them safely. Also maps any legacy view name (e.g. "newday") home.
   if (!KNOWN_VIEWS.includes(state.view) || EPHEMERAL_VIEWS.includes(state.view)) { state.view = "home"; }
+  // Seed the history stack: a "home" entry underneath, then the restored view,
+  // so the phone Back button walks back to Home instead of exiting the app.
+  replaceState("", { v: "home" });
+  if (state.view !== "home") { pushState("", { v: state.view }); }
+  navReady = true;
   render(); // paint immediately from draft (offline-friendly)
   try {
     const data = await apiGet("/api/data");
@@ -2653,6 +2771,7 @@ async function boot() {
     state.painCategories = data.painCategories;
     state.muscleGroups = data.muscleGroups || [];
     state.workouts = data.workouts;
+    state.workoutThemes = data.workoutThemes || [];
     state.templates = data.templates || [];
     state.foods = data.foods || [];
     state.meals = data.meals || [];
@@ -2668,6 +2787,84 @@ async function boot() {
     toast("Offline — showing cached view");
   }
 }
+/* ---- Drag to reorder exercises (pointer-based, touch-friendly) ---- */
+let drag = null;
+app.addEventListener("pointerdown", (e) => {
+  const h = e.target.closest("[data-drag]");
+  if (!h || state.view !== "active" || !state.active) { return; }
+  const card = h.closest(".ex-card");
+  const container = card && card.parentElement;
+  if (!card || !container) { return; }
+  e.preventDefault();
+  const cardEls = Array.from(container.querySelectorAll(".ex-card"));
+  const dragIndex = cardEls.indexOf(card);
+  const rects = cardEls.map((el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
+  drag = { dragIndex, newIndex: dragIndex, el: card, count: cardEls.length, mids: rects, startY: e.clientY };
+  card.classList.add("dragging");
+  try { h.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+});
+document.addEventListener("pointermove", (e) => {
+  if (!drag) { return; }
+  drag.el.style.transform = `translateY(${e.clientY - drag.startY}px)`;
+  let ni = 0;
+  drag.mids.forEach((mid, i) => { if (i !== drag.dragIndex && e.clientY > mid) { ni++; } });
+  drag.newIndex = Math.max(0, Math.min(drag.count - 1, ni));
+});
+function endDrag(commit) {
+  if (!drag) { return; }
+  const { dragIndex, newIndex, el } = drag;
+  el.classList.remove("dragging");
+  el.style.transform = "";
+  drag = null;
+  if (commit && newIndex !== dragIndex && state.active) {
+    const arr = state.active.entries;
+    arr.splice(newIndex, 0, arr.splice(dragIndex, 1)[0]);
+    save();
+  }
+  render();
+}
+document.addEventListener("pointerup", () => endDrag(true));
+document.addEventListener("pointercancel", () => endDrag(false));
+
+// Phone/browser Back button: SvelteKit updates $page.state on back/forward. We
+// react here — close an open overlay first, else move to the popped view.
+let navReady = false;
+page.subscribe((p) => {
+  if (!navReady) { return; }
+  const v = p.state && p.state.v;
+  if (!v || v === state.view) { return; }   // our own pushState / no change → ignore
+  if (closeTopOverlay()) {
+    pushState("", { v: state.view });         // consume the Back press, stay put
+    return;
+  }
+  // Workout-flow screens are meaningless once the session is gone (saved/discarded).
+  const target = (v === "active" || v === "finish" || v === "picker") && !state.active ? "home" : v;
+  state.view = target;
+  state.menuOpen = false;
+  save();
+  render();
+  window.scrollTo(0, 0);
+});
+
+// Swipe navigation for the drawer: swipe right from the left edge to open,
+// swipe left to close. Kept lightweight (threshold on touchend).
+let swipeX = 0, swipeY = 0, swipeTracking = false;
+document.addEventListener("touchstart", (e) => {
+  if (e.touches.length !== 1) { swipeTracking = false; return; }
+  swipeX = e.touches[0].clientX;
+  swipeY = e.touches[0].clientY;
+  swipeTracking = true;
+}, { passive: true });
+document.addEventListener("touchend", (e) => {
+  if (!swipeTracking) { return; }
+  swipeTracking = false;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swipeX, dy = t.clientY - swipeY;
+  if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) { return; }  // not a horizontal swipe
+  if (dx > 0 && swipeX < 30 && !state.menuOpen) { state.menuOpen = true; render(); }
+  else if (dx < 0 && state.menuOpen) { state.menuOpen = false; render(); }
+}, { passive: true });
+
 boot();
 
 export {}; // mark as a module (side-effect import from +page.svelte)
