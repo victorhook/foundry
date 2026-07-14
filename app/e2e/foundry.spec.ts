@@ -110,6 +110,62 @@ test('edit the date of a saved workout', async ({ page }) => {
 	await expect(page.locator('[data-act="detail-date"]')).toHaveValue('2023-01-15');
 });
 
+test('gym workout theme shows in the summary', async ({ page }) => {
+	await login(page);
+	await startRoutine(page, 'Gym');
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+
+	// Add a new theme within the Theme block and select it.
+	const themeBlock = page.locator('.finish-block', { hasText: 'Theme' });
+	await themeBlock.getByRole('button', { name: '+ New' }).click();
+	await page.locator('[data-act="theme-new-text"]').fill('Shoulders');
+	await themeBlock.getByRole('button', { name: 'Add' }).click();
+	await page.getByRole('button', { name: /Save workout/ }).click();
+
+	// The Recent card title reflects the theme.
+	await expect(page.locator('.h-title', { hasText: 'Shoulders' })).toBeVisible();
+});
+
+test('back button returns to where you came from', async ({ page }) => {
+	await login(page);
+	await startRoutine(page, 'Gym');
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+	await page.getByRole('button', { name: /Save workout/ }).click();
+
+	// Home → open the workout → Back should land Home (not History).
+	await page.locator('.hcard').first().click();
+	await expect(page.locator('[data-act="detail-date"]')).toBeVisible();
+	await page.goBack();
+	await expect(page.getByRole('button', { name: /Add workout/ })).toBeVisible();
+});
+
+test('reorder exercises by dragging', async ({ page }) => {
+	await login(page);
+	await startRoutine(page, 'Gym');
+	for (const name of ['Alpha', 'Bravo']) {
+		await page.getByRole('button', { name: /Add exercise/ }).click();
+		await page.getByRole('button', { name: /New exercise/ }).click();
+		await page.getByPlaceholder('Name').fill(name);
+		await page.getByRole('button', { name: 'Chest' }).click();
+		await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
+	}
+	// Initial order: Alpha (top), Bravo.
+	await expect(page.locator('.ex-card').first()).toContainText('Alpha');
+
+	// Drag Alpha's handle below Bravo.
+	const handle = page.locator('.ex-card', { hasText: 'Alpha' }).locator('.drag-handle');
+	const hb = await handle.boundingBox();
+	const bravo = page.locator('.ex-card', { hasText: 'Bravo' });
+	const bb = await bravo.boundingBox();
+	await page.mouse.move(hb!.x + hb!.width / 2, hb!.y + hb!.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(hb!.x + hb!.width / 2, bb!.y + bb!.height + 20, { steps: 12 });
+	await page.mouse.up();
+
+	// Order is now Bravo, Alpha.
+	await expect(page.locator('.ex-card').first()).toContainText('Bravo');
+});
+
 test('profile: weigh-in persists across reload', async ({ page }) => {
 	await login(page);
 	await menuNav(page, 'Profile');
@@ -172,9 +228,9 @@ test('walk logs time + pace with estimated distance', async ({ page }) => {
 test('templates: build one and start a prefilled workout from it', async ({ page }) => {
 	await login(page);
 
-	// Menu → Templates → New template.
-	await menuNav(page, 'Templates');
-	await page.getByRole('button', { name: /New template/ }).click();
+	// Build a template via the Add-workout chooser (Templates live there now).
+	await page.getByRole('button', { name: /Add workout/ }).click();
+	await page.locator('[data-act="new-template"]').click();
 	await page.locator('[data-act="tpl-name"]').fill('Push Day');
 
 	// Add an exercise by creating one from the picker (template starts empty).
@@ -184,18 +240,16 @@ test('templates: build one and start a prefilled workout from it', async ({ page
 	await page.getByRole('button', { name: 'Shoulders' }).click();
 	await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
 
-	// Back in the editor with the entry; save the template.
+	// Back in the editor with the entry; save the template (returns to the chooser).
 	await expect(page.getByText('Overhead Press')).toBeVisible();
 	await page.getByRole('button', { name: /Create template/ }).click();
 	await expect(page.locator('.tpl-name', { hasText: 'Push Day' })).toBeVisible();
 
-	// Reload on the manager proves the template persisted to SQLite.
+	// Reload proves the template persisted to SQLite.
 	await page.reload();
 	await expect(page.locator('.tpl-name', { hasText: 'Push Day' })).toBeVisible();
 
-	// Home → Add workout → start from the template; session is prefilled (3 sets).
-	await page.getByRole('button', { name: /Home/ }).click();
-	await page.getByRole('button', { name: /Add workout/ }).click();
+	// Start from the template; the session is prefilled (3 sets).
 	await page.locator('.tpl-card', { hasText: 'Push Day' }).click();
 	await expect(page.getByText('Overhead Press')).toBeVisible();
 	await expect(page.locator('.set-row')).toHaveCount(3);
