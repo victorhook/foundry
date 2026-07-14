@@ -145,12 +145,19 @@
     color: var(--muted); background: var(--surface-2); border: 1px solid var(--line);
   }
   .cal-nav:active { color: var(--accent); }
-  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  .cal-grid { display: grid; grid-template-columns: 1.5rem repeat(7, 1fr); gap: 5px; align-items: center; }
   .cal-dow {
     text-align: center; font-size: 0.64rem; font-weight: 700;
     color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.04em;
     padding-bottom: 4px;
   }
+  .cal-wk {
+    display: grid; place-items: center;
+    font-size: 0.58rem; font-weight: 700; color: var(--muted-2);
+    font-variant-numeric: tabular-nums;
+    border-right: 1px solid var(--line); margin-right: 2px; height: 100%;
+  }
+  .cal-corner { border-right-color: transparent; }
   .cal-day {
     aspect-ratio: 1; border-radius: 9px; position: relative;
     display: grid; place-items: center;
@@ -369,7 +376,9 @@
 
   /* ---------- Bottom action ---------- */
   .footer {
-    position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+    /* Centre with auto margins (not translateX) so the view-enter animation,
+       which animates `transform`, can't knock the bar off-centre. */
+    position: fixed; bottom: 0; left: 0; right: 0; margin: 0 auto;
     width: 100%; max-width: var(--frame);
     padding: 14px var(--pad) calc(14px + env(safe-area-inset-bottom));
     background: linear-gradient(to top, var(--ground) 70%, transparent);
@@ -551,8 +560,15 @@
     border-top-left-radius: 20px; border-top-right-radius: 20px;
     border-top: 1px solid var(--line); padding: 20px 18px calc(20px + env(safe-area-inset-bottom));
     display: flex; flex-direction: column; gap: 10px;
+    max-height: 92dvh; overflow-y: auto;   /* keep actions reachable on short screens */
   }
   .sheet-preview { width: 100%; max-height: 40vh; object-fit: contain; border-radius: 12px; background: var(--surface-2); }
+  .sheet-thumbs.multi {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 6px; max-height: 40vh; overflow-y: auto;
+  }
+  .sheet-thumb { width: 100%; border-radius: 10px; background: var(--surface-2); object-fit: cover; aspect-ratio: 1; }
+  .sheet-thumb.solo { aspect-ratio: auto; max-height: 40vh; object-fit: contain; }
   .sheet-actions { display: flex; gap: 10px; margin-top: 4px; }
   .sheet-actions .btn { flex: 1; padding: 14px; border-radius: 14px; font-weight: 800; }
 
@@ -591,3 +607,149 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
+
+  /* ---------- Hamburger menu ---------- */
+  .hamburger { font-size: 1.25rem; }
+  .hamburger.active { color: var(--accent); border-color: var(--accent); }
+  .menu-scrim {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(10, 12, 15, 0.5);
+    display: flex; justify-content: flex-end; align-items: flex-start;
+    padding: calc(58px + 8px) var(--pad) 0;   /* sit just below the header bar */
+    animation: fadeIn 0.16s ease both;
+  }
+  .menu-panel {
+    width: min(230px, 72vw);
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 14px; padding: 6px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+    animation: popIn 0.18s cubic-bezier(0.22, 0.9, 0.26, 1) both;
+    transform-origin: top right;
+  }
+  .menu-item {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    padding: 13px 12px; border-radius: 10px;
+    font-weight: 600; font-size: 0.98rem; color: var(--text); text-align: left;
+  }
+  .menu-item:active { background: var(--surface-2); }
+  .menu-ico { font-size: 1.1rem; width: 1.4rem; text-align: center; }
+  .menu-sep { height: 1px; background: var(--line); margin: 5px 8px; }
+
+  /* ---------- Confirm modal ---------- */
+  .modal-scrim {
+    position: fixed; inset: 0; z-index: 70;
+    background: rgba(10, 12, 15, 0.62);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; animation: fadeIn 0.18s ease both;
+  }
+  .modal {
+    width: 100%; max-width: 340px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 18px; padding: 22px 20px 18px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    animation: popIn 0.2s cubic-bezier(0.22, 0.9, 0.26, 1) both;
+  }
+  .modal-title { font-weight: 800; font-size: 1.15rem; letter-spacing: -0.01em; }
+  .modal-body { color: var(--muted); margin-top: 8px; line-height: 1.5; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+  .modal-actions .btn { flex: 1; padding: 14px; border-radius: 13px; }
+  .btn-danger { background: var(--hot); color: #14171C; }
+  .btn-danger:active { filter: brightness(0.92); }
+
+  /* Bigger primary action (home / chooser) */
+  .btn-lg { padding: 19px; font-size: 1.08rem; }
+
+  /* Editable big stepper value (walk duration) */
+  .big-val-input {
+    width: 2.6em; text-align: center; background: transparent; border: none;
+    color: var(--text); font-weight: 800; font-size: 2.1rem; letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums; padding: 0; -moz-appearance: textfield;
+  }
+  .big-val-input::-webkit-outer-spin-button,
+  .big-val-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  /* ---------- Templates ---------- */
+  .tpl-list { display: flex; flex-direction: column; gap: 10px; }
+  .tpl-card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 14px 15px;
+    display: flex; align-items: center; gap: 13px; width: 100%; text-align: left;
+  }
+  .tpl-card:active { border-color: var(--accent); }
+  .tpl-ico { font-size: 1.5rem; flex-shrink: 0; width: 1.8rem; text-align: center; }
+  .tpl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .tpl-name { font-weight: 700; font-size: 1rem; }
+  .tpl-meta { font-size: 0.8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tpl-go { color: var(--muted-2); font-size: 1.3rem; flex-shrink: 0; }
+  .tpl-manage { padding: 0; }
+  .tpl-open {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 13px;
+    padding: 14px 4px 14px 15px; text-align: left; color: inherit;
+  }
+  .tpl-del {
+    flex-shrink: 0; width: 44px; align-self: stretch;
+    color: var(--muted-2); font-size: 1.4rem;
+    border-left: 1px solid var(--line);
+  }
+  .tpl-del:active { color: var(--hot); background: var(--surface-2); }
+  .tpl-name-row { display: flex; gap: 8px; align-items: center; }
+
+  /* ---------- Nutrition ---------- */
+  .daynav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+  .daynav-center { position: relative; flex: 1; display: flex; justify-content: center; align-items: center; min-height: 34px; }
+  .daynav-label { font-weight: 700; font-size: 1rem; }
+  .daynav-date { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: none; background: none; }
+
+  .nutri-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 18px; }
+  .nutri-kcal { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .kcal-block { min-width: 0; }
+  .kcal-num { font-size: 2.3rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
+  .kcal-cap { color: var(--muted); font-size: 0.85rem; margin-top: 5px; }
+  .kcal-target { color: var(--muted); }
+
+  .bar { height: 7px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin-top: 6px; }
+  .bar.big { height: 9px; margin-top: 12px; }
+  .bar-fill { height: 100%; border-radius: 999px; transition: width 0.35s cubic-bezier(0.22, 0.8, 0.28, 1); }
+
+  .macro-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 16px; }
+  .macro-top { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; margin-bottom: 3px; }
+  .macro-lbl { font-size: 0.68rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .macro-val { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .macro-val.over { color: var(--hot); }
+
+  .nutri-slot { margin-bottom: 16px; }
+  .slot-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 8px; }
+  .slot-title { font-weight: 700; font-size: 1.02rem; }
+  .slot-kcal { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+  .entry {
+    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 6px; text-align: left;
+  }
+  .entry:active { background: var(--surface-2); }
+  .entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .entry-qty { color: var(--muted); font-weight: 600; }
+  .entry-kcal { color: var(--text); font-weight: 700; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .slot-actions { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
+  .slot-add { flex: 1; padding: 11px; font-size: 0.9rem; }
+
+  .food-list { display: flex; flex-direction: column; gap: 6px; }
+  .food-list > .pick-food-main { border: 1px solid var(--line); border-radius: 12px; }
+  .pick-food { display: flex; align-items: stretch; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 6px; }
+  .pick-food-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; padding: 12px 14px; text-align: left; background: var(--surface); }
+  .pick-food-main:active { background: var(--surface-2); }
+  .pf-name { font-weight: 600; }
+  .pf-macro { font-size: 0.8rem; color: var(--muted); }
+  .pf-edit { flex-shrink: 0; width: 46px; color: var(--muted-2); border-left: 1px solid var(--line); font-size: 1rem; display: grid; place-items: center; }
+  .pf-edit:active { color: var(--accent); background: var(--surface-2); }
+
+  .meal-chooser { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+
+  /* Hide native number spinners on text-style numeric inputs (match .step-val) */
+  .picker-search[type="number"] { -moz-appearance: textfield; }
+  .picker-search[type="number"]::-webkit-outer-spin-button,
+  .picker-search[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  .seg.wrap { flex-wrap: wrap; }
+  .set-fields.wrap { flex-wrap: wrap; }
+  .step-grp.narrow { flex: 1 1 40%; }
