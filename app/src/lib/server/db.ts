@@ -353,6 +353,12 @@ export function getWorkouts() {
 	}));
 }
 
+// Move an existing workout to a different day (edits started_at only).
+export function updateWorkoutDate(id: string, startedAt: number) {
+	db.prepare('UPDATE workout SET started_at = ? WHERE id = ?').run(startedAt, id);
+	return getWorkouts().find((w) => w.id === id) || null;
+}
+
 export function getProfile() {
 	const r = db
 		.prepare('SELECT dob, height, gender, kcal_target, protein_target, carbs_target, fat_target FROM profile WHERE id = 1')

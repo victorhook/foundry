@@ -91,6 +91,25 @@ test('strength sets (weight+reps) persist and carry over', async ({ page }) => {
 	await expect(page.locator('.d-set')).toHaveCount(2);
 });
 
+test('edit the date of a saved workout', async ({ page }) => {
+	await login(page);
+
+	// Save a quick Gym session, then open it from Recent.
+	await startRoutine(page, 'Gym');
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+	await page.getByRole('button', { name: /Save workout/ }).click();
+	await page.locator('.hcard').first().click();
+
+	// Change its date; the header label + stored value update.
+	await expect(page.locator('[data-act="detail-date"]')).toBeVisible();
+	await page.locator('[data-act="detail-date"]').fill('2023-01-15');
+	await expect(page.locator('.section-head .eyebrow')).toContainText('Jan 15');
+
+	// Reload: the new date is served from SQLite.
+	await page.reload();
+	await expect(page.locator('[data-act="detail-date"]')).toHaveValue('2023-01-15');
+});
+
 test('profile: weigh-in persists across reload', async ({ page }) => {
 	await login(page);
 	await menuNav(page, 'Profile');
