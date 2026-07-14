@@ -329,6 +329,21 @@ function addExerciseToActive(id) {
   go("active");
 }
 
+// Move a saved workout to a different day (edit its date from the detail screen).
+async function changeWorkoutDate(id, startedAt) {
+  const w = state.workouts.find((x) => x.id === id);
+  if (!w) { return; }
+  w.startedAt = startedAt;                 // optimistic
+  state.workouts.sort((a, b) => a.startedAt - b.startedAt);
+  render();
+  try {
+    await apiPut("/api/workouts", { id, startedAt });
+    toast("Date updated ✓");
+  } catch (e) {
+    toast("Couldn't update date");
+  }
+}
+
 /* ---- Templates ---- */
 // Start a session prefilled from a template: each exercise gets `setCount` sets
 // seeded with the template's default reps/weight (weight dropped for bodyweight).
@@ -1499,6 +1514,10 @@ function viewDetail() {
     ${header({ back: "history", backLabel: "History" })}
     <main>
       <div class="section-head"><span class="eyebrow">${w.routineName || "Workout"} · ${fmtDate(w.startedAt)}</span></div>
+      <div class="finish-block">
+        <span class="eyebrow">Date</span>
+        <input class="date-input" type="date" value="${dateInputValue(w.startedAt)}" data-act="detail-date" data-id="${w.id}">
+      </div>
       <div class="detail-stat-row">
         <div class="dstat"><div class="v tnum" style="color:${w.feel ? heatColor(w.feel) : "var(--text)"}">${w.feel || "–"}</div><div class="k">Effort</div></div>
         <div class="dstat"><div class="v tnum">${w.entries.length}</div><div class="k">Exercises</div></div>
@@ -2581,6 +2600,10 @@ app.addEventListener("input", (e) => {
     state.active.startedAt = new Date(y, m - 1, d, 12).getTime();
     state.active.manual = !isToday(state.active.startedAt);
     save();
+  }
+  else if (act === "detail-date" && t.value) {
+    const [y, m, d] = t.value.split("-").map(Number);
+    changeWorkoutDate(t.dataset.id, new Date(y, m - 1, d, 12).getTime());
   }
   else if (act === "setfield") {
     const ei = parseInt(t.dataset.ei, 10), si = parseInt(t.dataset.si, 10);
