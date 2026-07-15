@@ -27,6 +27,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		throw error(400, 'Bad day');
 	}
 	const slot = String(b.slot || 'snack');
+	// entries carry per-100g macros + grams (foods) or direct totals (quick add).
 	const entries = Array.isArray(b.entries) ? b.entries.filter((e: any) => e && e.name) : [];
 	if (!entries.length) {
 		throw error(400, 'No entries');
