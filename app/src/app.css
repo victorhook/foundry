@@ -621,6 +621,7 @@
 
   /* ---------- Navigation drawer (persistent, gesture-driven) ---------- */
   .hamburger { font-size: 1.25rem; }
+  .bar-title { font-weight: 700; font-size: 0.95rem; color: var(--text); letter-spacing: -0.01em; }
   .drawer-root { position: fixed; inset: 0; z-index: 50; pointer-events: none; }
   .drawer-root.open, .drawer-root.dragging { pointer-events: auto; }
   .drawer-scrim {
@@ -778,9 +779,10 @@
     background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
     padding: 14px; margin-bottom: 16px;
   }
-  .doc-frame {
-    width: 100%; height: 68vh; border: 1px solid var(--line);
-    border-radius: 12px; background: #fff;
+  .pdf-doc { display: flex; flex-direction: column; gap: 10px; }
+  .pdf-page {
+    width: 100%; border: 1px solid var(--line); border-radius: 10px;
+    background: #fff; display: block;
   }
   .doc-img { width: 100%; border-radius: 12px; border: 1px solid var(--line); }
 
