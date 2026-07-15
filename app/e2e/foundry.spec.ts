@@ -240,8 +240,15 @@ test('templates: build one and start a prefilled workout from it', async ({ page
 	await page.getByRole('button', { name: 'Shoulders' }).click();
 	await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
 
-	// Back in the editor with the entry; save the template (returns to the chooser).
+	// Back in the editor with the entry.
 	await expect(page.getByText('Overhead Press')).toBeVisible();
+
+	// Add a second exercise by PICKING the existing one from the library
+	// (regression: picking an existing exercise into a template used to do nothing).
+	await page.getByRole('button', { name: /Add exercise/ }).click();
+	await page.locator('.ex-pick', { hasText: 'Overhead Press' }).click();
+	await expect(page.locator('.ex-card')).toHaveCount(2);
+
 	await page.getByRole('button', { name: /Create template/ }).click();
 	await expect(page.locator('.tpl-name', { hasText: 'Push Day' })).toBeVisible();
 
@@ -249,9 +256,9 @@ test('templates: build one and start a prefilled workout from it', async ({ page
 	await page.reload();
 	await expect(page.locator('.tpl-name', { hasText: 'Push Day' })).toBeVisible();
 
-	// Start from the template; the session is prefilled (3 sets).
+	// Start from the template; the session is prefilled (3 sets on the open entry).
 	await page.locator('.tpl-card', { hasText: 'Push Day' }).click();
-	await expect(page.getByText('Overhead Press')).toBeVisible();
+	await expect(page.getByText('Overhead Press').first()).toBeVisible();
 	await expect(page.locator('.set-row')).toHaveCount(3);
 });
 

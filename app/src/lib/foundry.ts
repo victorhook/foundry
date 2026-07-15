@@ -2559,7 +2559,10 @@ app.addEventListener("click", (e) => {
       };
       render();
       break;
-    case "pick": addExerciseToActive(t.dataset.id); break;
+    case "pick":
+      if (state.picker.target === "template") { addExerciseToTemplate(t.dataset.id); }
+      else { addExerciseToActive(t.dataset.id); }
+      break;
     case "set-cat": state.picker.cat = t.dataset.cat; render(); break;
     case "del-ex": delExercise(ei); break;
     case "toggle-expand": toggleExpand(ei); break;
