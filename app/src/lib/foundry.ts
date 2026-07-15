@@ -2694,7 +2694,9 @@ async function renderProgramPdf() {
       await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
     }
   } catch (e) {
-    host.innerHTML = `<div class="empty">Couldn't render the PDF. <a class="text-btn" href="${url}" target="_blank" rel="noopener">Open it ↗</a></div>`;
+    const msg = e && e.message ? e.message : String(e);
+    try { console.error("PDF render failed:", e); } catch (_) { /* ignore */ }
+    host.innerHTML = `<div class="empty">Couldn't render the PDF.<br><span style="font-size:0.78rem;opacity:0.8;">${escAttr(msg)}</span><br><a class="text-btn" href="${url}" target="_blank" rel="noopener">Open it ↗</a></div>`;
   }
 }
 
