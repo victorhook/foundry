@@ -2273,6 +2273,32 @@ async function onFoodImage(file) {
   } catch (e) { toast("Image upload failed"); }
   state.foodImageBusy = false; render();
 }
+// Scan a nutrition label: OCR on the server extracts macros → prefill for review.
+async function onScanLabel(file) {
+  if (!file || !file.type || !file.type.startsWith("image/")) { return; }
+  state.scanBusy = true; render();
+  try {
+    const blob = await downscale(file);
+    const fd = new FormData();
+    fd.append("file", blob, "label.jpg");
+    const r = await fetch("/api/ocr-macros", { method: "POST", body: fd });
+    if (!r.ok) { throw new Error("ocr failed"); }
+    const m = await r.json();
+    const f = state.foodEdit;
+    let got = 0;
+    if (m.kcal != null) { f.kcal = m.kcal; got++; }
+    if (m.protein != null) { f.protein = m.protein; got++; }
+    if (m.carbs != null) { f.carbs = m.carbs; got++; }
+    if (m.fat != null) { f.fat = m.fat; got++; }
+    state.scanBusy = false;
+    render();
+    if (got) { toast(m.basis === "serving" ? "Scanned (per serving — check per 100g)" : "Scanned — check the values"); }
+    else { toast("Couldn't read the macros — enter manually"); }
+    return;
+  } catch (e) { toast("Scan failed"); }
+  state.scanBusy = false; render();
+}
+
 async function saveFoodEdit() {
   const f = state.foodEdit;
   if (!(f.name || "").trim()) { toast("Name the food"); return; }
@@ -2535,7 +2561,9 @@ function viewFoodEdit() {
     <main>
       <div class="section-head"><span class="eyebrow">${editing ? "Edit food" : "New food"}</span></div>
       ${field("Name", "name", "e.g. Greek yogurt")}
-      <div class="eyebrow" style="margin:16px 2px 10px;">Per 100 g</div>
+      <button class="add-ex-btn" data-act="scan-pick" style="margin-top:14px;" ${state.scanBusy ? "disabled style=opacity:0.6" : ""}>${state.scanBusy ? "Reading label…" : "📷 Scan label"}</button>
+      <input type="file" accept="image/*" capture="environment" id="scan-file" data-act="scan-file" style="display:none">
+      <div class="eyebrow" style="margin:18px 2px 10px;">Per 100 g</div>
       <div class="macro-grid">
         ${field("Calories", "kcal", "0", numAttr)}
         ${field("Protein (g)", "protein", "0", numAttr)}
@@ -3172,6 +3200,7 @@ app.addEventListener("click", (e) => {
     case "add-daily": addDailyMeals(); break;
     case "food-img-pick": { const el = document.getElementById("food-img-file"); if (el) { el.click(); } break; }
     case "food-img-remove": state.foodEdit.image = null; render(); break;
+    case "scan-pick": { const el = document.getElementById("scan-file"); if (el) { el.click(); } break; }
     case "slot-save-meal": saveSlotAsMeal(t.dataset.slot); break;
     case "edit-entry": openEntryEdit(t.dataset.id); break;
     case "close-entry": state.entryEdit = null; render(); break;
@@ -3317,6 +3346,9 @@ app.addEventListener("change", (e) => {
     t.value = "";
   } else if (t && t.dataset.act === "food-img-file") {
     onFoodImage(t.files && t.files[0]);
+    t.value = "";
+  } else if (t && t.dataset.act === "scan-file") {
+    onScanLabel(t.files && t.files[0]);
     t.value = "";
   }
 });
