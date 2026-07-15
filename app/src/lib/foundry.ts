@@ -2125,10 +2125,13 @@ function round1(n) { return Math.round(n * 10) / 10; }
 function fmtNum(n) { return Number.isInteger(n) ? String(n) : String(round1(n)); }
 function slotTitle(key) { const s = NUTRI_SLOTS.find((x) => x[0] === key); return s ? s[1] : "Meal"; }
 
+// Food entries store per-100g macros + grams → total = per100g × g/100.
+// Quick-add / legacy entries have no grams → total = macros × qty.
 function entryTotals(e) {
-  const q = e.qty || 1;
-  return { kcal: (e.kcal || 0) * q, protein: (e.protein || 0) * q, carbs: (e.carbs || 0) * q, fat: (e.fat || 0) * q };
+  const f = e.grams != null ? (e.grams / 100) : (e.qty || 1);
+  return { kcal: (e.kcal || 0) * f, protein: (e.protein || 0) * f, carbs: (e.carbs || 0) * f, fat: (e.fat || 0) * f };
 }
+const DEFAULT_GRAMS = 100;
 function sumTotals(list) {
   const t = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
   (list || []).forEach((e) => { const x = entryTotals(e); t.kcal += x.kcal; t.protein += x.protein; t.carbs += x.carbs; t.fat += x.fat; });
@@ -2176,15 +2179,43 @@ async function addLogEntries(slot, entries) {
     toast(entries.length > 1 ? entries.length + " items added ✓" : "Added ✓");
   } catch (e) { toast("Couldn't add"); }
 }
+function foodToEntry(f, grams) {
+  // Snapshot the food's per-100g macros + the gram amount onto the entry.
+  return { foodId: f.id, grams, name: f.name, kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat };
+}
 function logFood(f) {
   if (!f) { return; }
-  addLogEntries(state.addFood.slot, [{ foodId: f.id, qty: 1, name: f.name, kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat }]);
+  addLogEntries(state.addFood.slot, [foodToEntry(f, DEFAULT_GRAMS)]);
+}
+function mealToEntries(m) {
+  return (m.items || []).map((it) => ({
+    foodId: it.foodId, grams: it.grams != null ? it.grams : null, qty: it.grams != null ? undefined : (it.qty || 1),
+    name: it.name, kcal: it.kcal, protein: it.protein, carbs: it.carbs, fat: it.fat
+  }));
 }
 function logMeal(m) {
   if (!m) { return; }
-  const entries = (m.items || []).map((it) => ({ foodId: it.foodId, qty: it.qty || 1, name: it.name, kcal: it.kcal, protein: it.protein, carbs: it.carbs, fat: it.fat }));
+  const entries = mealToEntries(m);
   if (!entries.length) { toast("Empty meal"); return; }
   addLogEntries(state.addFood.slot, entries);
+}
+// Add all "everyday" meals to the current day, each into its default slot.
+function addDailyMeals() {
+  const daily = state.meals.filter((m) => m.everyday && m.items.length);
+  if (!daily.length) { toast("No everyday meals set"); return; }
+  const day = state.nutritionDay;
+  (async () => {
+    let added = 0;
+    for (const m of daily) {
+      try {
+        const log = await apiPost("/api/nutrition", { day, slot: m.slot || "snack", entries: mealToEntries(m) });
+        if (state.nutritionDay === day) { state.dayLog = log; }
+        added++;
+      } catch (e) { /* continue */ }
+    }
+    render();
+    toast(added ? `Added ${added} daily meal${added !== 1 ? "s" : ""} ✓` : "Couldn't add");
+  })();
 }
 function logQuick() {
   const q = state.addFood.quick;
@@ -2205,7 +2236,7 @@ async function saveEntryEdit() {
   const e = state.entryEdit;
   try {
     const log = await apiPut("/api/nutrition", {
-      id: e.id, slot: e.slot, qty: numOrNull(e.qty) ?? 1,
+      id: e.id, slot: e.slot, grams: e.grams != null ? numOrNull(e.grams) : null, qty: numOrNull(e.qty) ?? 1,
       name: e.name, kcal: numOrNull(e.kcal), protein: numOrNull(e.protein), carbs: numOrNull(e.carbs), fat: numOrNull(e.fat),
     });
     state.dayLog = log;
@@ -2217,19 +2248,35 @@ async function deleteEntry(id) {
   state.entryEdit = null; render();
 }
 
-/* ---- Food library ---- */
+/* ---- Food library (macros per 100 g) ---- */
 function openFoodEdit(id, back) {
   const f = id ? state.foods.find((x) => x.id === id) : null;
-  state.foodEdit = f ? { ...f } : { id: null, name: "", serving: "", kcal: "", protein: "", carbs: "", fat: "" };
+  state.foodEdit = f
+    ? { ...f }
+    : { id: null, name: "", image: null, kcal: "", protein: "", carbs: "", fat: "" };
+  state.foodImageBusy = false;
   state.foodEditReturn = back || "addfood";
   go("foodedit");
+}
+async function onFoodImage(file) {
+  if (!file || !file.type || !file.type.startsWith("image/")) { return; }
+  state.foodImageBusy = true; render();
+  try {
+    const blob = await downscale(file);
+    const fd = new FormData();
+    fd.append("file", blob, "food.jpg");
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!r.ok) { throw new Error("upload failed"); }
+    state.foodEdit.image = (await r.json()).filename;
+  } catch (e) { toast("Image upload failed"); }
+  state.foodImageBusy = false; render();
 }
 async function saveFoodEdit() {
   const f = state.foodEdit;
   if (!(f.name || "").trim()) { toast("Name the food"); return; }
   let saved;
   try {
-    saved = await apiPost("/api/foods", { id: f.id || undefined, name: f.name.trim(), serving: f.serving || null, kcal: numOrNull(f.kcal), protein: numOrNull(f.protein), carbs: numOrNull(f.carbs), fat: numOrNull(f.fat) });
+    saved = await apiPost("/api/foods", { id: f.id || undefined, name: f.name.trim(), image: f.image || null, kcal: numOrNull(f.kcal), protein: numOrNull(f.protein), carbs: numOrNull(f.carbs), fat: numOrNull(f.fat) });
   } catch (e) { toast("Couldn't save food"); return; }
   const i = state.foods.findIndex((x) => x.id === saved.id);
   if (i >= 0) { state.foods[i] = saved; } else { state.foods.push(saved); }
@@ -2244,25 +2291,25 @@ function deleteFoodById(id) {
   render();
 }
 
-/* ---- Saved meals ---- */
+/* ---- Saved meals (foods by grams) ---- */
 function openMealEdit(id, back) {
   const m = id ? state.meals.find((x) => x.id === id) : null;
   state.mealEdit = m
-    ? { id: m.id, name: m.name, icon: m.icon || "", items: m.items.map((it) => ({ ...it })) }
-    : { id: null, name: "", icon: "", items: [] };
+    ? { id: m.id, name: m.name, icon: m.icon || "", everyday: !!m.everyday, slot: m.slot || null, items: m.items.map((it) => ({ ...it })) }
+    : { id: null, name: "", icon: "", everyday: false, slot: null, items: [] };
   state.mealEditReturn = back || "addfood";
   state.mealAddOpen = false; state.mealQ = "";
   go("mealedit");
 }
 function addFoodToMeal(f) {
   if (!f) { return; }
-  state.mealEdit.items.push({ foodId: f.id, qty: 1, name: f.name, kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat });
+  state.mealEdit.items.push({ foodId: f.id, grams: DEFAULT_GRAMS, name: f.name, kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat });
   render();
 }
 function delMealItem(i) { state.mealEdit.items.splice(i, 1); render(); }
-function bumpMealQty(i, dir) {
+function bumpMealGrams(i, dir) {
   const it = state.mealEdit.items[i];
-  it.qty = Math.max(0.5, Math.round(((it.qty || 1) + dir * 0.5) * 10) / 10);
+  it.grams = Math.max(1, Math.round(((it.grams || DEFAULT_GRAMS) + dir * 10)));
   render();
 }
 async function saveMealEdit() {
@@ -2271,7 +2318,7 @@ async function saveMealEdit() {
   if (!m.items.length) { toast("Add a food"); return; }
   let saved;
   try {
-    saved = await apiPost("/api/meals", { id: m.id || undefined, name: m.name.trim(), icon: m.icon || null, items: m.items });
+    saved = await apiPost("/api/meals", { id: m.id || undefined, name: m.name.trim(), icon: m.icon || null, everyday: !!m.everyday, slot: m.slot || null, items: m.items });
   } catch (e) { toast("Couldn't save meal"); return; }
   const i = state.meals.findIndex((x) => x.id === saved.id);
   if (i >= 0) { state.meals[i] = saved; } else { state.meals.push(saved); }
@@ -2289,9 +2336,9 @@ function deleteMealById(id) {
 // Turn a day's slot into a reusable saved meal.
 function saveSlotAsMeal(slot) {
   const items = (state.dayLog || []).filter((e) => e.slot === slot)
-    .map((e) => ({ foodId: e.foodId, qty: e.qty || 1, name: e.name, kcal: e.kcal, protein: e.protein, carbs: e.carbs, fat: e.fat }));
+    .map((e) => ({ foodId: e.foodId, grams: e.grams != null ? e.grams : null, qty: e.grams != null ? undefined : (e.qty || 1), name: e.name, kcal: e.kcal, protein: e.protein, carbs: e.carbs, fat: e.fat }));
   if (!items.length) { toast("Nothing to save"); return; }
-  state.mealEdit = { id: null, name: "", icon: "", items };
+  state.mealEdit = { id: null, name: "", icon: "", everyday: false, slot, items };
   state.mealEditReturn = "nutrition";
   state.mealAddOpen = false; state.mealQ = "";
   go("mealedit");
@@ -2324,9 +2371,11 @@ function macroBar(label, val, target, color) {
 
 function entryRow(e) {
   const x = entryTotals(e);
-  const q = (e.qty && e.qty !== 1) ? ` <span class="entry-qty">×${fmtNum(e.qty)}</span>` : "";
+  const amt = e.grams != null
+    ? ` <span class="entry-qty">${fmtNum(e.grams)} g</span>`
+    : (e.qty && e.qty !== 1 ? ` <span class="entry-qty">×${fmtNum(e.qty)}</span>` : "");
   return `<button class="entry" data-act="edit-entry" data-id="${e.id}">
-    <span class="entry-name">${escAttr(e.name)}${q}</span>
+    <span class="entry-name">${escAttr(e.name)}${amt}</span>
     <span class="entry-kcal tnum">${fmtNum(Math.round(x.kcal))}</span>
   </button>`;
 }
@@ -2391,6 +2440,7 @@ function viewNutrition() {
         <button class="cal-nav" data-act="nutri-next" aria-label="Next day">›</button>
       </div>
       ${totalsCard}
+      ${state.meals.some((m) => m.everyday && m.items.length) ? `<button class="add-ex-btn" data-act="add-daily" style="margin-bottom:16px;">＋ Add daily meals</button>` : ""}
       ${loading ? `<div class="empty" style="margin-top:14px;">Loading…</div>` : slotsHtml}
     </main>
   </div>`;
@@ -2401,14 +2451,20 @@ function quickField(label, field, val) {
     <input class="picker-search" type="number" inputmode="decimal" placeholder="0" value="${escAttr(val == null ? "" : val)}" data-act="quick-field" data-field="${field}"></div>`;
 }
 
+function foodThumb(f) {
+  return f.image
+    ? `<img class="p-thumb" src="/api/file/${f.image}" loading="lazy" alt="">`
+    : `<span class="p-thumb p-thumb-empty">🍎</span>`;
+}
 function addFoodRows() {
   const q = (state.addFood.q || "").toLowerCase();
   const list = state.foods.filter((f) => !q || f.name.toLowerCase().includes(q));
   return list.length
     ? list.map((f) => `<div class="pick-food">
-        <button class="pick-food-main" data-act="log-food" data-id="${f.id}">
-          <span class="pf-name">${escAttr(f.name)}</span>
-          <span class="pf-macro">${fmtNum(Math.round(f.kcal || 0))} kcal${f.serving ? " · " + escAttr(f.serving) : ""}</span>
+        <button class="pick-food-main pick-food-img" data-act="log-food" data-id="${f.id}">
+          ${foodThumb(f)}
+          <span class="pf-txt"><span class="pf-name">${escAttr(f.name)}</span>
+          <span class="pf-macro">${fmtNum(Math.round(f.kcal || 0))} kcal / 100 g</span></span>
         </button>
         <button class="pf-edit" data-act="edit-food" data-id="${f.id}" aria-label="Edit food">✎</button>
       </div>`).join("")
@@ -2469,17 +2525,24 @@ function viewFoodEdit() {
   const field = (label, k, ph, attrs) => `<div class="finish-block"><span class="eyebrow">${label}</span>
     <input class="picker-search" ${attrs || 'type="text"'} value="${escAttr(f[k] == null ? "" : f[k])}" placeholder="${ph || ""}" data-act="food-field" data-field="${k}"></div>`;
   const numAttr = 'type="number" inputmode="decimal"';
+  const imgRow = f.image
+    ? `<div class="ex-img-edit"><img class="ex-img-preview" src="/api/file/${f.image}" alt="food"><button class="chip" data-act="food-img-remove">Remove</button></div>`
+    : `<button class="add-ex-btn" data-act="food-img-pick" ${state.foodImageBusy ? "disabled style=opacity:0.5" : ""}>${state.foodImageBusy ? "Uploading…" : "＋ Add image"}</button>`;
   return `<div class="app">
     ${header({ back: true, backLabel: "Back" })}
     <main>
       <div class="section-head"><span class="eyebrow">${editing ? "Edit food" : "New food"}</span></div>
       ${field("Name", "name", "e.g. Greek yogurt")}
-      ${field("Serving", "serving", "e.g. 1 cup (200 g)")}
-      ${field("Calories", "kcal", "0", numAttr)}
-      ${field("Protein (g)", "protein", "0", numAttr)}
-      ${field("Carbs (g)", "carbs", "0", numAttr)}
-      ${field("Fat (g)", "fat", "0", numAttr)}
-      <div class="eyebrow" style="margin:6px 2px;color:var(--muted-2);">Macros are per one serving.</div>
+      <div class="eyebrow" style="margin:16px 2px 10px;">Per 100 g</div>
+      <div class="macro-grid">
+        ${field("Calories", "kcal", "0", numAttr)}
+        ${field("Protein (g)", "protein", "0", numAttr)}
+        ${field("Carbs (g)", "carbs", "0", numAttr)}
+        ${field("Fat (g)", "fat", "0", numAttr)}
+      </div>
+      <div class="eyebrow" style="margin:16px 2px 10px;">Image</div>
+      ${imgRow}
+      <input type="file" accept="image/*" id="food-img-file" data-act="food-img-file" style="display:none">
     </main>
     <div class="footer">
       ${editing ? `<button class="btn btn-ghost" data-act="del-food" data-id="${f.id}">Delete</button>` : ""}
@@ -2493,17 +2556,24 @@ function viewMealEdit() {
   if (!m) { go("addfood"); return ""; }
   const editing = !!m.id;
   const tot = sumTotals(m.items);
-  const items = m.items.map((it, i) => `<div class="ex-card expanded">
-    <div class="ex-head"><span class="ex-name">${escAttr(it.name)}</span>
-      <button class="ex-del" data-act="del-meal-item" data-i="${i}" aria-label="Remove">×</button></div>
-    <div class="set-row"><div class="set-fields">
-      <div class="step-grp"><span class="lbl">qty</span>
-        <button class="step-btn" data-act="meal-qty-dec" data-i="${i}">−</button>
-        <input class="step-val tnum" type="number" inputmode="decimal" value="${it.qty || 1}" data-act="meal-qty" data-i="${i}">
-        <button class="step-btn" data-act="meal-qty-inc" data-i="${i}">+</button></div>
-      <span class="entry-kcal tnum" style="align-self:center;">${fmtNum(Math.round((it.kcal || 0) * (it.qty || 1)))} kcal</span>
-    </div></div>
-  </div>`).join("");
+  const items = m.items.map((it, i) => {
+    const g = it.grams != null ? it.grams : DEFAULT_GRAMS;
+    const kcal = Math.round((it.kcal || 0) * (it.grams != null ? g / 100 : (it.qty || 1)));
+    const gramsCtl = it.grams != null
+      ? `<div class="step-grp"><span class="lbl">grams</span>
+          <button class="step-btn" data-act="meal-g-dec" data-i="${i}">−</button>
+          <input class="step-val tnum" type="number" inputmode="numeric" value="${g}" data-act="meal-grams" data-i="${i}">
+          <button class="step-btn" data-act="meal-g-inc" data-i="${i}">+</button></div>`
+      : `<div class="step-grp"><span class="lbl">qty</span><input class="step-val tnum" type="number" inputmode="decimal" value="${it.qty || 1}" data-act="meal-qty" data-i="${i}"></div>`;
+    return `<div class="ex-card expanded">
+      <div class="ex-head"><span class="ex-name">${escAttr(it.name)}</span>
+        <button class="ex-del" data-act="del-meal-item" data-i="${i}" aria-label="Remove">×</button></div>
+      <div class="set-row"><div class="set-fields">
+        ${gramsCtl}
+        <span class="entry-kcal tnum" style="align-self:center;">${fmtNum(kcal)} kcal</span>
+      </div></div>
+    </div>`;
+  }).join("");
 
   const q = (state.mealQ || "").toLowerCase();
   const foodList = state.foods.filter((f) => !q || f.name.toLowerCase().includes(q));
@@ -2512,10 +2582,16 @@ function viewMealEdit() {
         <input class="picker-search" id="meal-q" placeholder="Search foods…" value="${escAttr(state.mealQ || "")}" data-act="meal-q">
         <button class="add-ex-btn" data-act="meal-new-food" style="margin-bottom:10px;">＋ New food</button>
         <div class="food-list">${foodList.length
-          ? foodList.map((f) => `<button class="pick-food-main" data-act="meal-add-food" data-id="${f.id}"><span class="pf-name">${escAttr(f.name)}</span><span class="pf-macro">${fmtNum(Math.round(f.kcal || 0))} kcal</span></button>`).join("")
+          ? foodList.map((f) => `<button class="pick-food-main pick-food-img" data-act="meal-add-food" data-id="${f.id}">${foodThumb(f)}<span class="pf-txt"><span class="pf-name">${escAttr(f.name)}</span><span class="pf-macro">${fmtNum(Math.round(f.kcal || 0))} kcal / 100 g</span></span></button>`).join("")
           : `<div class="empty">No foods — create one.</div>`}</div>
       </div>`
     : `<button class="add-ex-btn" data-act="meal-add-open" style="margin-top:12px;">＋ Add food</button>`;
+
+  const slotChips = NUTRI_SLOTS.map(([k, l]) => `<button class="chip ${m.slot === k ? "active" : ""}" data-act="meal-slot" data-slot="${k}">${l}</button>`).join("");
+  const everydayBlock = `<div class="finish-block" style="margin-top:18px;">
+    <div class="chip-row"><button class="chip ${m.everyday ? "active" : ""}" data-act="meal-everyday">${m.everyday ? "★ Every day" : "☆ Every day"}</button></div>
+    ${m.everyday ? `<div class="eyebrow" style="margin:12px 2px 8px;">Default meal</div><div class="chip-row">${slotChips}</div>` : ""}
+  </div>`;
 
   return `<div class="app">
     ${header({ back: true, backLabel: state.mealEditReturn === "nutrition" ? "Nutrition" : "Back" })}
@@ -2527,6 +2603,7 @@ function viewMealEdit() {
       </div>
       ${items}
       ${chooser}
+      ${everydayBlock}
     </main>
     <div class="footer">
       <button class="btn btn-primary" data-act="save-meal">${editing ? "Save meal" : "Create meal"}</button>
@@ -2539,23 +2616,27 @@ function entryEditSheet() {
   const e = state.entryEdit;
   if (!e) { return ""; }
   const x = entryTotals(e);
+  const isFood = e.grams != null;
   const slotSeg = NUTRI_SLOTS.map(([k, l]) => `<button class="seg-btn ${e.slot === k ? "active" : ""}" data-act="entry-slot" data-slot="${k}">${l}</button>`).join("");
   const f = (label, k) => `<div class="step-grp narrow"><span class="lbl">${label}</span>
     <input class="step-val tnum" type="number" inputmode="decimal" value="${e[k] == null ? "" : e[k]}" data-act="entry-field" data-field="${k}" aria-label="${label}"></div>`;
+  // Food entries adjust by grams (macros computed); quick-add entries edit macros directly.
+  const amountBlock = isFood
+    ? `<div class="finish-block"><span class="eyebrow">Amount (g)</span>
+        <div class="set-fields"><div class="step-grp">
+          <button class="step-btn" data-act="entry-g-dec">−</button>
+          <input class="step-val tnum" type="number" inputmode="numeric" value="${e.grams}" data-act="entry-grams" aria-label="Grams">
+          <button class="step-btn" data-act="entry-g-inc">+</button>
+        </div></div>
+        <div class="kcal-cap" style="margin-top:8px;">${fmtNum(Math.round(x.kcal))} kcal · P ${fmtNum(round1(x.protein))} · C ${fmtNum(round1(x.carbs))} · F ${fmtNum(round1(x.fat))}</div>
+      </div>`
+    : `<div class="finish-block"><span class="eyebrow">Totals</span>
+        <div class="set-fields wrap">${f("kcal", "kcal")}${f("P", "protein")}${f("C", "carbs")}${f("F", "fat")}</div>
+      </div>`;
   return `<div class="sheet-wrap" data-act="close-entry">
     <div class="sheet" data-act="noop">
-      <div class="eyebrow" style="margin-bottom:2px;">${escAttr(e.name)}</div>
-      <div class="kcal-cap" style="margin-bottom:10px;">${fmtNum(Math.round(x.kcal))} kcal total</div>
-      <div class="finish-block"><span class="eyebrow">Quantity</span>
-        <div class="set-fields"><div class="step-grp">
-          <button class="step-btn" data-act="entry-qty-dec">−</button>
-          <input class="step-val tnum" type="number" inputmode="decimal" value="${e.qty || 1}" data-act="entry-qty" aria-label="Quantity">
-          <button class="step-btn" data-act="entry-qty-inc">+</button>
-        </div></div>
-      </div>
-      <div class="finish-block"><span class="eyebrow">Per serving</span>
-        <div class="set-fields wrap">${f("kcal", "kcal")}${f("P", "protein")}${f("C", "carbs")}${f("F", "fat")}</div>
-      </div>
+      <div class="eyebrow" style="margin-bottom:12px;">${escAttr(e.name)}</div>
+      ${amountBlock}
       <div class="finish-block"><span class="eyebrow">Meal</span><div class="seg wrap">${slotSeg}</div></div>
       <div class="sheet-actions">
         <button class="btn btn-ghost" data-act="del-entry" data-id="${e.id}">Delete</button>
@@ -3040,19 +3121,24 @@ app.addEventListener("click", (e) => {
     case "close-mealedit": { const back = state.mealEditReturn || "addfood"; state.mealEdit = null; state.mealEditReturn = null; go(back); break; }
     case "save-meal": saveMealEdit(); break;
     case "del-meal-item": delMealItem(parseInt(t.dataset.i, 10)); break;
-    case "meal-qty-inc": bumpMealQty(parseInt(t.dataset.i, 10), +1); break;
-    case "meal-qty-dec": bumpMealQty(parseInt(t.dataset.i, 10), -1); break;
+    case "meal-g-inc": bumpMealGrams(parseInt(t.dataset.i, 10), +1); break;
+    case "meal-g-dec": bumpMealGrams(parseInt(t.dataset.i, 10), -1); break;
     case "meal-add-open": state.mealAddOpen = true; render(); break;
     case "meal-add-food": addFoodToMeal(state.foods.find((f) => f.id === t.dataset.id)); break;
     case "meal-new-food": openFoodEdit(null, "mealedit"); break;
+    case "meal-everyday": state.mealEdit.everyday = !state.mealEdit.everyday; if (state.mealEdit.everyday && !state.mealEdit.slot) { state.mealEdit.slot = "breakfast"; } render(); break;
+    case "meal-slot": state.mealEdit.slot = t.dataset.slot; render(); break;
+    case "add-daily": addDailyMeals(); break;
+    case "food-img-pick": { const el = document.getElementById("food-img-file"); if (el) { el.click(); } break; }
+    case "food-img-remove": state.foodEdit.image = null; render(); break;
     case "slot-save-meal": saveSlotAsMeal(t.dataset.slot); break;
     case "edit-entry": openEntryEdit(t.dataset.id); break;
     case "close-entry": state.entryEdit = null; render(); break;
     case "save-entry": saveEntryEdit(); break;
     case "del-entry": deleteEntry(t.dataset.id); break;
     case "entry-slot": state.entryEdit.slot = t.dataset.slot; render(); break;
-    case "entry-qty-inc": state.entryEdit.qty = Math.round(((numOrNull(state.entryEdit.qty) || 1) + 0.5) * 10) / 10; render(); break;
-    case "entry-qty-dec": state.entryEdit.qty = Math.max(0.5, Math.round(((numOrNull(state.entryEdit.qty) || 1) - 0.5) * 10) / 10); render(); break;
+    case "entry-g-inc": state.entryEdit.grams = Math.max(1, Math.round((numOrNull(state.entryEdit.grams) || 0) + 10)); render(); break;
+    case "entry-g-dec": state.entryEdit.grams = Math.max(1, Math.round((numOrNull(state.entryEdit.grams) || 0) - 10)); render(); break;
 
     /* ---- Programs ---- */
     case "programs": openPrograms(); break;
@@ -3134,7 +3220,9 @@ app.addEventListener("input", (e) => {
     });
   }
   else if (act === "meal-qty") { state.mealEdit.items[parseInt(t.dataset.i, 10)].qty = numOrNull(t.value) || 1; }
+  else if (act === "meal-grams") { state.mealEdit.items[parseInt(t.dataset.i, 10)].grams = numOrNull(t.value) || 0; }
   else if (act === "entry-qty") { state.entryEdit.qty = t.value; }
+  else if (act === "entry-grams") { state.entryEdit.grams = t.value; }
   else if (act === "entry-field") { state.entryEdit[t.dataset.field] = t.value; }
   else if (act === "target-field") { state.targetEdit[t.dataset.field] = t.value; }
   else if (act === "prog-title") { state.programEdit.title = t.value; }
@@ -3184,6 +3272,9 @@ app.addEventListener("change", (e) => {
     t.value = "";
   } else if (t && t.dataset.act === "program-file") {
     onProgramFile(t.files && t.files[0]);
+    t.value = "";
+  } else if (t && t.dataset.act === "food-img-file") {
+    onFoodImage(t.files && t.files[0]);
     t.value = "";
   }
 });

@@ -359,18 +359,23 @@ test('nutrition: targets, quick-add, custom food, edit qty, and persistence', as
 	await expect(page.getByText('Chicken breast')).toBeVisible();
 	await expect(page.locator('.kcal-num')).toHaveText('500');
 
-	// Edit the oatmeal entry: qty 1 -> 2, totals recompute (300*2 + 200).
+	// Edit the oatmeal quick-add entry's total kcal 300 -> 600 (600 + 200 = 800).
 	await page.getByText('Oatmeal').click();
-	await page.locator('[data-act="entry-qty-inc"]').click();
-	await page.locator('[data-act="entry-qty-inc"]').click();
+	await page.locator('[data-act="entry-field"][data-field="kcal"]').fill('600');
 	await page.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(page.locator('.kcal-num')).toHaveText('800');
+
+	// Edit the chicken FOOD entry by grams: 100g -> 150g (200 kcal/100g -> 300).
+	await page.getByText('Chicken breast').click();
+	await page.locator('[data-act="entry-grams"]').fill('150');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.locator('.kcal-num')).toHaveText('900');
 
 	// Reload: the day's entries come from SQLite.
 	await page.reload();
 	await expect(page.getByText('Oatmeal')).toBeVisible();
 	await expect(page.getByText('Chicken breast')).toBeVisible();
-	await expect(page.locator('.kcal-num')).toHaveText('800');
+	await expect(page.locator('.kcal-num')).toHaveText('900');
 });
 
 test('nutrition: build a saved meal and log it in one tap', async ({ page }) => {
@@ -400,6 +405,35 @@ test('nutrition: build a saved meal and log it in one tap', async ({ page }) => 
 	await page.locator('.back-btn').click();
 	await expect(page.getByText('Egg').first()).toBeVisible();
 	await expect(page.locator('.kcal-num')).toHaveText('140');
+});
+
+test('nutrition per-100g: meal by grams + everyday one-tap add', async ({ page }) => {
+	await login(page);
+	await openNutritionOn(page, '2024-09-01');
+
+	// A food with 130 kcal per 100 g.
+	await page.locator('[data-act="add-food"][data-slot="lunch"]').click();
+	await page.getByRole('button', { name: /New food/ }).click();
+	await page.locator('[data-act="food-field"][data-field="name"]').fill('Rice');
+	await page.locator('[data-act="food-field"][data-field="kcal"]').fill('130');
+	await page.getByRole('button', { name: /Add food/ }).click();
+
+	// A meal with 200 g of rice (→ 260 kcal), marked everyday for Lunch.
+	await page.getByRole('button', { name: 'Meals' }).click();
+	await page.getByRole('button', { name: /New meal/ }).click();
+	await page.locator('[data-act="meal-name"]').fill('Rice bowl');
+	await page.getByRole('button', { name: /Add food/ }).click();
+	await page.locator('.meal-chooser [data-act="meal-add-food"]', { hasText: 'Rice' }).click();
+	await page.locator('[data-act="meal-grams"]').fill('200');
+	await page.getByRole('button', { name: /Every day/ }).click();
+	await page.getByRole('button', { name: 'Lunch' }).click();
+	await page.getByRole('button', { name: /Create meal/ }).click();
+
+	// From the day, one tap adds all everyday meals → 200 g × 130/100 = 260 kcal.
+	await page.locator('.back-btn').click();
+	await page.getByRole('button', { name: /Add daily meals/ }).click();
+	await expect(page.locator('.kcal-num')).toHaveText('260');
+	await expect(page.getByText('Rice')).toBeVisible();
 });
 
 const TINY_JPEG = Buffer.from(

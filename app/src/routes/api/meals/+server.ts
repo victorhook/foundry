@@ -17,6 +17,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 				.filter((it: any) => it && it.name)
 				.map((it: any) => ({
 					foodId: it.foodId ?? null,
+					grams: it.grams ?? null,
 					qty: it.qty ?? 1,
 					name: String(it.name),
 					kcal: it.kcal,
@@ -25,7 +26,17 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 					fat: it.fat
 				}))
 		: [];
-	return json(saveMeal({ id: b.id ? String(b.id) : undefined, name, icon: b.icon ?? null, items }));
+	const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
+	return json(
+		saveMeal({
+			id: b.id ? String(b.id) : undefined,
+			name,
+			icon: b.icon ?? null,
+			everyday: !!b.everyday,
+			slot: SLOTS.includes(b.slot) ? b.slot : null,
+			items
+		})
+	);
 };
 
 export const DELETE: RequestHandler = async ({ locals, request }) => {

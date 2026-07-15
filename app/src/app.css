@@ -762,6 +762,15 @@
 
   .meal-chooser { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
 
+  /* Food editor: per-100g macros in a 2x2 grid */
+  .macro-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .macro-grid .finish-block { margin-bottom: 14px; }
+
+  /* Food rows with a thumbnail */
+  .pick-food-img { flex-direction: row !important; align-items: center; gap: 12px; }
+  .pick-food-img .pf-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .food-list > .pick-food-img { border: 1px solid var(--line); border-radius: 12px; }
+
   /* ---------- Home hero ---------- */
   .home-hero { margin: 4px 2px 4px; }
   .hero-hi { font-size: 1.55rem; font-weight: 800; letter-spacing: -0.02em; }

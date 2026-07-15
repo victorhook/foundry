@@ -12,7 +12,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	if (!name) {
 		throw error(400, 'Name required');
 	}
-	const f = { name, serving: b.serving ?? null, kcal: b.kcal, protein: b.protein, carbs: b.carbs, fat: b.fat };
+	// kcal/protein/carbs/fat are per 100 g.
+	const f = { name, image: b.image ?? null, kcal: b.kcal, protein: b.protein, carbs: b.carbs, fat: b.fat };
 	return json(b.id ? updateFood(String(b.id), f) : createFood(f));
 };
 

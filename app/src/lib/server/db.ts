@@ -226,7 +226,16 @@ const migrations: Array<(d: Database.Database) => void> = [
 			text TEXT NOT NULL,
 			created_at INTEGER NOT NULL
 		);
-		CREATE INDEX IF NOT EXISTS idx_note_day ON note(day)`)
+		CREATE INDEX IF NOT EXISTS idx_note_day ON note(day)`),
+	// v16 -> v17: nutrition rework — food macros are now PER 100g + a food image;
+	// meals/log entries reference a gram amount (macros computed from it); meals
+	// can be flagged "everyday" with a default slot for one-tap daily logging.
+	(d) =>
+		d.exec(`ALTER TABLE food ADD COLUMN image TEXT;
+		ALTER TABLE meal ADD COLUMN everyday INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE meal ADD COLUMN slot TEXT;
+		ALTER TABLE meal_item ADD COLUMN grams REAL;
+		ALTER TABLE food_log ADD COLUMN grams REAL`)
 ];
 
 function migrate() {
@@ -611,41 +620,44 @@ export function deleteProgram(id: string) {
 /* ---- Nutrition: food library ---- */
 const num = (v: any) => (v === null || v === undefined || v === '' ? null : Number(v));
 
+// Food macros are stored PER 100g (kcal/protein/carbs/fat) + an optional image.
 export function getFoods() {
 	return db
-		.prepare('SELECT id, name, serving, kcal, protein, carbs, fat FROM food ORDER BY name')
-		.all() as any[];
+		.prepare('SELECT id, name, image, kcal, protein, carbs, fat FROM food ORDER BY name')
+		.all()
+		.map((r: any) => ({ id: r.id, name: r.name, image: r.image || null, kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat }));
 }
 
 export function createFood(f: any) {
 	const id = uid();
 	db.prepare(
-		'INSERT INTO food (id, name, serving, kcal, protein, carbs, fat, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-	).run(id, f.name, f.serving ?? null, num(f.kcal), num(f.protein), num(f.carbs), num(f.fat), Date.now());
-	return db.prepare('SELECT id, name, serving, kcal, protein, carbs, fat FROM food WHERE id = ?').get(id);
+		'INSERT INTO food (id, name, image, kcal, protein, carbs, fat, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+	).run(id, f.name, f.image ?? null, num(f.kcal), num(f.protein), num(f.carbs), num(f.fat), Date.now());
+	return getFoods().find((x) => x.id === id);
 }
 
 export function updateFood(id: string, f: any) {
-	db.prepare('UPDATE food SET name = ?, serving = ?, kcal = ?, protein = ?, carbs = ?, fat = ? WHERE id = ?').run(
-		f.name, f.serving ?? null, num(f.kcal), num(f.protein), num(f.carbs), num(f.fat), id
+	db.prepare('UPDATE food SET name = ?, image = ?, kcal = ?, protein = ?, carbs = ?, fat = ? WHERE id = ?').run(
+		f.name, f.image ?? null, num(f.kcal), num(f.protein), num(f.carbs), num(f.fat), id
 	);
-	return db.prepare('SELECT id, name, serving, kcal, protein, carbs, fat FROM food WHERE id = ?').get(id);
+	return getFoods().find((x) => x.id === id);
 }
 
 export function deleteFood(id: string) {
 	db.prepare('DELETE FROM food WHERE id = ?').run(id);
 }
 
-/* ---- Nutrition: saved meals (bundles of foods) ---- */
+/* ---- Nutrition: saved meals (bundles of foods, each with a gram amount) ---- */
 export function getMeals() {
-	const meals = db.prepare('SELECT id, name, icon FROM meal ORDER BY name').all() as any[];
+	const meals = db.prepare('SELECT id, name, icon, everyday, slot FROM meal ORDER BY name').all() as any[];
 	const items = db
-		.prepare('SELECT meal_id, food_id, qty, name, kcal, protein, carbs, fat FROM meal_item ORDER BY ord')
+		.prepare('SELECT meal_id, food_id, grams, qty, name, kcal, protein, carbs, fat FROM meal_item ORDER BY ord')
 		.all() as any[];
 	const byMeal: Record<string, any[]> = {};
 	for (const it of items) {
 		(byMeal[it.meal_id] ||= []).push({
 			foodId: it.food_id,
+			grams: it.grams,
 			qty: it.qty,
 			name: it.name,
 			kcal: it.kcal,
@@ -654,7 +666,14 @@ export function getMeals() {
 			fat: it.fat
 		});
 	}
-	return meals.map((m) => ({ id: m.id, name: m.name, icon: m.icon || null, items: byMeal[m.id] || [] }));
+	return meals.map((m) => ({
+		id: m.id,
+		name: m.name,
+		icon: m.icon || null,
+		everyday: !!m.everyday,
+		slot: m.slot || null,
+		items: byMeal[m.id] || []
+	}));
 }
 
 function getMeal(id: string) {
@@ -665,16 +684,16 @@ export const saveMeal = db.transaction((m: any) => {
 	const id = m.id || uid();
 	const exists = db.prepare('SELECT id FROM meal WHERE id = ?').get(id);
 	if (exists) {
-		db.prepare('UPDATE meal SET name = ?, icon = ? WHERE id = ?').run(m.name, m.icon ?? null, id);
+		db.prepare('UPDATE meal SET name = ?, icon = ?, everyday = ?, slot = ? WHERE id = ?').run(m.name, m.icon ?? null, m.everyday ? 1 : 0, m.slot ?? null, id);
 		db.prepare('DELETE FROM meal_item WHERE meal_id = ?').run(id);
 	} else {
-		db.prepare('INSERT INTO meal (id, name, icon, created_at) VALUES (?, ?, ?, ?)').run(id, m.name, m.icon ?? null, Date.now());
+		db.prepare('INSERT INTO meal (id, name, icon, everyday, slot, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, m.name, m.icon ?? null, m.everyday ? 1 : 0, m.slot ?? null, Date.now());
 	}
 	const ins = db.prepare(
-		'INSERT INTO meal_item (id, meal_id, food_id, ord, qty, name, kcal, protein, carbs, fat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+		'INSERT INTO meal_item (id, meal_id, food_id, ord, grams, qty, name, kcal, protein, carbs, fat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 	);
 	(m.items || []).forEach((it: any, i: number) =>
-		ins.run(uid(), id, it.foodId ?? null, i, num(it.qty) ?? 1, it.name, num(it.kcal), num(it.protein), num(it.carbs), num(it.fat))
+		ins.run(uid(), id, it.foodId ?? null, i, num(it.grams), num(it.qty) ?? 1, it.name, num(it.kcal), num(it.protein), num(it.carbs), num(it.fat))
 	);
 	return getMeal(id);
 });
@@ -686,10 +705,10 @@ export function deleteMeal(id: string) {
 /* ---- Nutrition: daily diary ---- */
 export function getFoodLog(day: string) {
 	return db
-		.prepare('SELECT id, day, slot, ord, food_id, qty, name, kcal, protein, carbs, fat FROM food_log WHERE day = ? ORDER BY slot, ord, created_at')
+		.prepare('SELECT id, day, slot, ord, food_id, grams, qty, name, kcal, protein, carbs, fat FROM food_log WHERE day = ? ORDER BY slot, ord, created_at')
 		.all(day)
 		.map((r: any) => ({
-			id: r.id, day: r.day, slot: r.slot, foodId: r.food_id, qty: r.qty,
+			id: r.id, day: r.day, slot: r.slot, foodId: r.food_id, grams: r.grams, qty: r.qty,
 			name: r.name, kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat
 		}));
 }
@@ -699,10 +718,10 @@ export const addFoodLog = db.transaction((day: string, slot: string, entries: an
 	const row = db.prepare('SELECT COALESCE(MAX(ord), -1) AS m FROM food_log WHERE day = ? AND slot = ?').get(day, slot) as any;
 	let ord = (row.m as number) + 1;
 	const ins = db.prepare(
-		'INSERT INTO food_log (id, day, slot, ord, food_id, qty, name, kcal, protein, carbs, fat, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+		'INSERT INTO food_log (id, day, slot, ord, food_id, grams, qty, name, kcal, protein, carbs, fat, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 	);
 	for (const e of entries) {
-		ins.run(uid(), day, slot, ord++, e.foodId ?? null, num(e.qty) ?? 1, e.name, num(e.kcal), num(e.protein), num(e.carbs), num(e.fat), Date.now());
+		ins.run(uid(), day, slot, ord++, e.foodId ?? null, num(e.grams), num(e.qty) ?? 1, e.name, num(e.kcal), num(e.protein), num(e.carbs), num(e.fat), Date.now());
 	}
 	return getFoodLog(day);
 });
@@ -710,8 +729,9 @@ export const addFoodLog = db.transaction((day: string, slot: string, entries: an
 export function updateFoodLog(id: string, patch: any) {
 	const cur = db.prepare('SELECT * FROM food_log WHERE id = ?').get(id) as any;
 	if (!cur) { return null; }
-	db.prepare('UPDATE food_log SET slot = ?, qty = ?, name = ?, kcal = ?, protein = ?, carbs = ?, fat = ? WHERE id = ?').run(
+	db.prepare('UPDATE food_log SET slot = ?, grams = ?, qty = ?, name = ?, kcal = ?, protein = ?, carbs = ?, fat = ? WHERE id = ?').run(
 		patch.slot ?? cur.slot,
+		patch.grams !== undefined ? num(patch.grams) : cur.grams,
 		patch.qty != null ? num(patch.qty) : cur.qty,
 		patch.name ?? cur.name,
 		patch.kcal !== undefined ? num(patch.kcal) : cur.kcal,
