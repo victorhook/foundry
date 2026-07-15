@@ -841,8 +841,10 @@ function cancelWorkout() {
   go("home");
 }
 
+function stopDictation() { if (recognizing && recog) { try { recog.stop(); } catch (e) { /* ignore */ } } }
 function go(view) {
   const changed = view !== state.view;
+  stopDictation();
   state.view = view;
   closeDrawer();
   save();
@@ -2899,6 +2901,40 @@ function deleteNoteById(id) {
   history.back();
 }
 
+/* ---- Voice dictation (Web Speech API — Android Chrome) ---- */
+let recog = null, recognizing = false, dictateBase = "", dictateFinal = "";
+function speechSupported() {
+  return typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+}
+function toggleDictation() {
+  if (recognizing) { if (recog) { recog.stop(); } return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast("Voice input isn't supported here"); return; }
+  recog = new SR();
+  recog.lang = navigator.language || "en-US";
+  recog.continuous = true;
+  recog.interimResults = true;
+  dictateBase = state.noteEdit && state.noteEdit.text ? state.noteEdit.text.trim() + " " : "";
+  dictateFinal = "";
+  recog.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) { dictateFinal += r[0].transcript + " "; } else { interim += r[0].transcript; }
+    }
+    if (state.noteEdit) { state.noteEdit.text = (dictateBase + dictateFinal).replace(/\s+/g, " ").trimStart(); }
+    const ta = document.querySelector('[data-act="note-text"]');
+    if (ta) { ta.value = (dictateBase + dictateFinal + interim).replace(/\s+/g, " ").trimStart(); }
+  };
+  recog.onerror = (e) => {
+    recognizing = false; recog = null;
+    if (e && e.error === "not-allowed") { toast("Microphone permission denied"); } else if (e && e.error !== "aborted") { toast("Voice input error"); }
+    render();
+  };
+  recog.onend = () => { recognizing = false; recog = null; render(); };
+  try { recog.start(); recognizing = true; render(); } catch (err) { recognizing = false; recog = null; }
+}
+
 function viewNotes() {
   const q = (state.notesQ || "").toLowerCase();
   const list = state.notes.filter((n) => !q || n.text.toLowerCase().includes(q));
@@ -2930,8 +2966,13 @@ function viewNoteEdit() {
       <div class="section-head"><span class="eyebrow">${editing ? "Edit note" : "New note"}</span></div>
       <div class="finish-block"><span class="eyebrow">Date</span>
         <input class="date-input" type="date" value="${n.day}" data-act="note-date"></div>
-      <div class="finish-block"><span class="eyebrow">Note</span>
-        <textarea class="notes note-textarea" data-act="note-text" placeholder="How did today go?" autofocus>${escAttr(n.text || "")}</textarea></div>
+      <div class="finish-block">
+        <div class="note-head">
+          <span class="eyebrow" style="margin:0;">Note</span>
+          ${speechSupported() ? `<button class="mic-btn ${recognizing ? "recording" : ""}" data-act="dictate">${recognizing ? "● Stop" : "🎤 Dictate"}</button>` : ""}
+        </div>
+        <textarea class="notes note-textarea" data-act="note-text" placeholder="How did today go?">${escAttr(n.text || "")}</textarea>
+      </div>
     </main>
     <div class="footer">
       ${editing ? `<button class="btn btn-ghost" data-act="del-note" data-id="${n.id}">Delete</button>` : ""}
@@ -3167,6 +3208,7 @@ app.addEventListener("click", (e) => {
     case "new-note": newNote(); break;
     case "edit-note": editNote(t.dataset.id); break;
     case "save-note": saveNoteEdit(); break;
+    case "dictate": toggleDictation(); break;
     case "del-note": {
       const id = t.dataset.id;
       state.confirm = { title: "Delete note?", ok: "Delete", danger: true, onOk: () => deleteNoteById(id) };
@@ -3382,6 +3424,7 @@ page.subscribe((p) => {
   }
   // Workout-flow screens are meaningless once the session is gone (saved/discarded).
   const target = (v === "active" || v === "finish" || v === "picker") && !state.active ? "home" : v;
+  stopDictation();
   state.view = target;
   closeDrawer();
   save();
