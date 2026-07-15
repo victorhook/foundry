@@ -88,7 +88,8 @@ test('strength sets (weight+reps) persist and carry over', async ({ page }) => {
 	// Open the saved workout; the two sets are shown.
 	await page.getByText(/1 exercise/).first().click();
 	await expect(page.getByText('Back Squat')).toBeVisible();
-	await expect(page.locator('.d-set')).toHaveCount(2);
+	// Compact detail summarizes the two sets on one line.
+	await expect(page.locator('.d-ex', { hasText: 'Back Squat' }).locator('.d-ex-sum')).toContainText('2 sets');
 });
 
 test('edit the date of a saved workout', async ({ page }) => {
@@ -361,4 +362,57 @@ test('nutrition: build a saved meal and log it in one tap', async ({ page }) => 
 	await page.locator('.back-btn').click();
 	await expect(page.getByText('Egg').first()).toBeVisible();
 	await expect(page.locator('.kcal-num')).toHaveText('140');
+});
+
+const TINY_JPEG = Buffer.from(
+	'/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wAALCAAyADIBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAv/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==',
+	'base64'
+);
+
+test('exercise image uploads and shows in the picker', async ({ page }) => {
+	await login(page);
+	await startRoutine(page, 'Gym');
+	await page.getByRole('button', { name: /Add exercise/ }).click();
+	await page.getByRole('button', { name: /New exercise/ }).click();
+	await page.getByPlaceholder('Name').fill('Cable Row');
+	await page.getByRole('button', { name: 'Chest' }).click();
+
+	// Attach an image; a preview appears, then save.
+	await page.locator('#ex-img-file').setInputFiles({ name: 'x.jpg', mimeType: 'image/jpeg', buffer: TINY_JPEG });
+	await expect(page.locator('.ex-img-preview')).toBeVisible();
+	await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
+
+	// Reopen the picker — the exercise now shows an image thumbnail.
+	await page.getByRole('button', { name: /Add exercise/ }).click();
+	await expect(
+		page.locator('.ex-pick', { hasText: 'Cable Row' }).locator('img.p-thumb')
+	).toBeVisible();
+});
+
+test('upload a program with a PDF and view it', async ({ page }) => {
+	await login(page);
+	await menuNav(page, 'Programs');
+	await page.getByRole('button', { name: /Add program/ }).click();
+
+	await page.locator('[data-act="prog-title"]').fill('Knee rehab plan');
+	await page.getByRole('button', { name: /Rehab/ }).click();
+	await page.locator('[data-act="prog-date"]').fill('2026-07-01');
+	await page.locator('[data-act="prog-notes"]').fill('3x per week');
+	await page.locator('#program-file').setInputFiles({
+		name: 'plan.pdf',
+		mimeType: 'application/pdf',
+		buffer: Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF', 'utf8')
+	});
+	await expect(page.getByText(/PDF attached/)).toBeVisible();
+	await page.getByRole('button', { name: 'Add program', exact: true }).click();
+
+	// Listed on the Programs screen; reload proves it persisted to SQLite.
+	await expect(page.locator('.tpl-name', { hasText: 'Knee rehab plan' })).toBeVisible();
+	await page.reload();
+	await expect(page.locator('.tpl-name', { hasText: 'Knee rehab plan' })).toBeVisible();
+
+	// Open it — the document frame + notes render.
+	await page.locator('.tpl-card', { hasText: 'Knee rehab plan' }).click();
+	await expect(page.locator('.doc-frame')).toBeVisible();
+	await expect(page.getByText('3x per week')).toBeVisible();
 });

@@ -23,8 +23,9 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const muscles = parseMuscles(body);
 	const bodyweight = !!body.bodyweight;
 	const unit = body.unit === 'sec' ? 'sec' : 'kg';
+	const image = body.image ? String(body.image) : null;
 	if (body.id) {
-		return json(updateExercise(String(body.id), name, muscles, bodyweight, unit));
+		return json(updateExercise(String(body.id), name, muscles, bodyweight, unit, image));
 	}
-	return json(createExercise(name, muscles, bodyweight, unit));
+	return json(createExercise(name, muscles, bodyweight, unit, image));
 };

@@ -204,6 +204,19 @@ const migrations: Array<(d: Database.Database) => void> = [
 		CREATE TABLE IF NOT EXISTS workout_theme (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT UNIQUE NOT NULL
+		)`),
+	// v14 -> v15: exercise image + uploaded training programs / rehab plans / events.
+	(d) =>
+		d.exec(`ALTER TABLE exercise ADD COLUMN image TEXT;
+		CREATE TABLE IF NOT EXISTS program (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			kind TEXT,
+			filename TEXT,
+			mime TEXT,
+			start_date TEXT,
+			notes TEXT,
+			created_at INTEGER NOT NULL
 		)`)
 ];
 
@@ -284,7 +297,7 @@ function splitMuscles(s: string | null): string[] {
 
 export function getExercises() {
 	return db
-		.prepare('SELECT id, name, type, muscle, bodyweight, unit, custom FROM exercise ORDER BY name')
+		.prepare('SELECT id, name, type, muscle, bodyweight, unit, image, custom FROM exercise ORDER BY name')
 		.all()
 		.map((r: any) => ({
 			id: r.id,
@@ -293,6 +306,7 @@ export function getExercises() {
 			muscles: splitMuscles(r.muscle),
 			bodyweight: !!r.bodyweight,
 			unit: r.unit || 'kg',
+			image: r.image || null,
 			custom: !!r.custom
 		}));
 }
@@ -504,6 +518,58 @@ export function deleteTemplate(id: string) {
 	db.prepare('DELETE FROM workout_template WHERE id = ?').run(id);
 }
 
+/* ---- Training programs / rehab plans / events (uploaded documents) ---- */
+export function getPrograms() {
+	return db
+		.prepare("SELECT id, title, kind, filename, mime, start_date, notes, created_at FROM program ORDER BY COALESCE(start_date, '') DESC, created_at DESC")
+		.all()
+		.map((r: any) => ({
+			id: r.id,
+			title: r.title,
+			kind: r.kind || 'program',
+			filename: r.filename || null,
+			mime: r.mime || null,
+			startDate: r.start_date || null,
+			notes: r.notes || '',
+			createdAt: r.created_at
+		}));
+}
+
+export function createProgram(p: any) {
+	const id = uid();
+	db.prepare(
+		'INSERT INTO program (id, title, kind, filename, mime, start_date, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+	).run(id, p.title, p.kind ?? 'program', p.filename ?? null, p.mime ?? null, p.startDate ?? null, p.notes ?? '', Date.now());
+	return getPrograms().find((x) => x.id === id) || null;
+}
+
+export function updateProgram(id: string, p: any) {
+	const cur = db.prepare('SELECT * FROM program WHERE id = ?').get(id) as any;
+	if (!cur) { return null; }
+	db.prepare('UPDATE program SET title = ?, kind = ?, filename = ?, mime = ?, start_date = ?, notes = ? WHERE id = ?').run(
+		p.title ?? cur.title,
+		p.kind ?? cur.kind,
+		p.filename !== undefined ? p.filename : cur.filename,
+		p.mime !== undefined ? p.mime : cur.mime,
+		p.startDate !== undefined ? p.startDate : cur.start_date,
+		p.notes !== undefined ? p.notes : cur.notes,
+		id
+	);
+	return getPrograms().find((x) => x.id === id) || null;
+}
+
+export function getProgramFile(id: string) {
+	return db.prepare('SELECT filename, mime FROM program WHERE id = ?').get(id) as
+		| { filename: string; mime: string }
+		| undefined;
+}
+
+export function deleteProgram(id: string) {
+	const row = getProgramFile(id);
+	db.prepare('DELETE FROM program WHERE id = ?').run(id);
+	return row;
+}
+
 /* ---- Nutrition: food library ---- */
 const num = (v: any) => (v === null || v === undefined || v === '' ? null : Number(v));
 
@@ -633,6 +699,7 @@ export function getAllData() {
 		workouts: getWorkouts(),
 		workoutThemes: getWorkoutThemes(),
 		templates: getTemplates(),
+		programs: getPrograms(),
 		foods: getFoods(),
 		meals: getMeals(),
 		profile: getProfile(),
@@ -725,27 +792,28 @@ function rememberMuscles(muscles: string[]) {
 	}
 }
 
-export function createExercise(name: string, muscles: string[], bodyweight: boolean, unit: string) {
+export function createExercise(name: string, muscles: string[], bodyweight: boolean, unit: string, image: string | null) {
 	const id = uid();
 	const clean = muscles.map((m) => m.trim()).filter(Boolean);
 	db.prepare(
-		'INSERT INTO exercise (id, name, type, muscle, bodyweight, unit, custom, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)'
-	).run(id, name, 'strength', clean.join(','), bodyweight ? 1 : 0, unit, Date.now());
+		'INSERT INTO exercise (id, name, type, muscle, bodyweight, unit, image, custom, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)'
+	).run(id, name, 'strength', clean.join(','), bodyweight ? 1 : 0, unit, image ?? null, Date.now());
 	rememberMuscles(clean);
-	return { id, name, type: 'strength', muscles: clean, bodyweight, unit, custom: true };
+	return { id, name, type: 'strength', muscles: clean, bodyweight, unit, image: image ?? null, custom: true };
 }
 
-export function updateExercise(id: string, name: string, muscles: string[], bodyweight: boolean, unit: string) {
+export function updateExercise(id: string, name: string, muscles: string[], bodyweight: boolean, unit: string, image: string | null) {
 	const clean = muscles.map((m) => m.trim()).filter(Boolean);
-	db.prepare('UPDATE exercise SET name = ?, muscle = ?, bodyweight = ?, unit = ? WHERE id = ?').run(
+	db.prepare('UPDATE exercise SET name = ?, muscle = ?, bodyweight = ?, unit = ?, image = ? WHERE id = ?').run(
 		name,
 		clean.join(','),
 		bodyweight ? 1 : 0,
 		unit,
+		image ?? null,
 		id
 	);
 	rememberMuscles(clean);
-	const r = db.prepare('SELECT id, name, type, muscle, bodyweight, unit, custom FROM exercise WHERE id = ?').get(id) as any;
+	const r = db.prepare('SELECT id, name, type, muscle, bodyweight, unit, image, custom FROM exercise WHERE id = ?').get(id) as any;
 	return {
 		id: r.id,
 		name: r.name,
@@ -753,6 +821,7 @@ export function updateExercise(id: string, name: string, muscles: string[], body
 		muscles: splitMuscles(r.muscle),
 		bodyweight: !!r.bodyweight,
 		unit: r.unit || 'kg',
+		image: r.image || null,
 		custom: !!r.custom
 	};
 }
