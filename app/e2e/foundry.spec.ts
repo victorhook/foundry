@@ -116,8 +116,8 @@ test('gym workout theme shows in the summary', async ({ page }) => {
 	await startRoutine(page, 'Gym');
 	await page.getByRole('button', { name: /Finish workout/ }).click();
 
-	// Add a new theme within the Theme block and select it.
-	const themeBlock = page.locator('.finish-block', { hasText: 'Theme' });
+	// Add a new category within the Category block and select it.
+	const themeBlock = page.locator('.finish-block', { hasText: 'Category' });
 	await themeBlock.getByRole('button', { name: '+ New' }).click();
 	await page.locator('[data-act="theme-new-text"]').fill('Shoulders');
 	await themeBlock.getByRole('button', { name: 'Add' }).click();
@@ -411,8 +411,8 @@ test('upload a program with a PDF and view it', async ({ page }) => {
 	await page.reload();
 	await expect(page.locator('.tpl-name', { hasText: 'Knee rehab plan' })).toBeVisible();
 
-	// Open it — the document frame + notes render.
+	// Open it — the in-app PDF host (pdf.js canvas container) + notes render.
 	await page.locator('.tpl-card', { hasText: 'Knee rehab plan' }).click();
-	await expect(page.locator('.doc-frame')).toBeVisible();
+	await expect(page.locator('.pdf-doc')).toBeVisible();
 	await expect(page.getByText('3x per week')).toBeVisible();
 });

@@ -895,6 +895,7 @@ function render() {
     prevView = state.view;
   }
   if (state.view === "profile") { drawWeightChart(); }
+  if (state.view === "program") { renderProgramPdf(); }
 }
 
 function header(opts) {
@@ -903,7 +904,7 @@ function header(opts) {
   // exercise form is a special case that passes its own back act.
   const left = opts.back
     ? `<button class="back-btn" data-act="${opts.backAct || "nav-back"}">‹ ${opts.backLabel || "Back"}</button>`
-    : `<button class="iconbtn hamburger" data-act="menu-toggle" aria-label="Menu">☰</button>`;
+    : `<button class="iconbtn hamburger" data-act="menu-toggle" aria-label="Menu">☰</button>${opts.title ? `<span class="bar-title">${opts.title}</span>` : ""}`;
   let right = "";
   if (opts.dateLabel) {
     right = `<div class="timer">📅 ${opts.dateLabel}</div>`;
@@ -988,18 +989,11 @@ function viewHome() {
     ? recent.map(historyCard).join("")
     : `<div class="empty">No workouts yet.</div>`;
 
-  const now = new Date();
-  const hr = now.getHours();
-  const hi = hr < 5 ? "Late night" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
-  const dayLong = now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const today = new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 
   return `<div class="app">
-    ${header({})}
+    ${header({ title: today })}
     <main>
-      <div class="home-hero">
-        <div class="hero-hi">${hi}</div>
-        <div class="hero-day">${dayLong}</div>
-      </div>
       ${calendarWidget()}
 
       <div class="section-head">
@@ -1578,10 +1572,10 @@ function viewFinish() {
           `<button class="chip ${w.theme === th ? "active" : ""}" data-act="set-theme" data-theme="${escAttr(th)}">${th}</button>`
         ).join("");
         const newHtml = w.themeNewOpen
-          ? inlineNewField("theme-new-text", "theme-new-add", null, w.themeNewText || "", "New theme…")
+          ? inlineNewField("theme-new-text", "theme-new-add", null, w.themeNewText || "", "New category…")
           : `<button class="chip" data-act="theme-new">+ New</button>`;
         return `<div class="finish-block">
-          <span class="eyebrow">Theme <span style="color:var(--muted-2);font-weight:600;text-transform:none;letter-spacing:0;">· e.g. Shoulders, Knee rehab</span></span>
+          <span class="eyebrow">Category <span style="color:var(--muted-2);font-weight:600;text-transform:none;letter-spacing:0;">· e.g. Shoulders, Knee rehab</span></span>
           <div class="chip-row">${chips}${newHtml}</div>
         </div>`;
       })()}
@@ -1683,10 +1677,10 @@ function viewDetail() {
           `<button class="chip ${w.theme === th ? "active" : ""}" data-act="detail-theme" data-id="${w.id}" data-theme="${escAttr(th)}">${th}</button>`
         ).join("");
         const newHtml = state.detailThemeNewOpen
-          ? `<span class="inline-new"><input class="inline-new-input" data-act="detail-theme-new-text" value="${escAttr(state.detailThemeNewText || "")}" placeholder="New theme…" autofocus><button class="chip" data-act="detail-theme-new-add" data-id="${w.id}">Add</button></span>`
+          ? `<span class="inline-new"><input class="inline-new-input" data-act="detail-theme-new-text" value="${escAttr(state.detailThemeNewText || "")}" placeholder="New category…" autofocus><button class="chip" data-act="detail-theme-new-add" data-id="${w.id}">Add</button></span>`
           : `<button class="chip" data-act="detail-theme-new" data-id="${w.id}">+ New</button>`;
         return `<div class="finish-block">
-          <span class="eyebrow">Theme</span>
+          <span class="eyebrow">Category</span>
           <div class="chip-row">${chips}${newHtml}</div>
         </div>`;
       })()}
@@ -2610,6 +2604,49 @@ function fmtDay(iso) {
   return new Date(y, m - 1, d, 12).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+// pdf.js is loaded on demand (only when viewing a PDF program) to keep the
+// initial bundle small. The worker is served from our own origin (CSP-safe).
+let pdfjsLib = null;
+async function getPdfjs() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import("pdfjs-dist");
+    const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+  }
+  return pdfjsLib;
+}
+
+// Render every page of the current program's PDF into #pdf-doc as canvases.
+async function renderProgramPdf() {
+  const p = state.programs.find((x) => x.id === state.programView);
+  if (!p || p.mime !== "application/pdf") { return; }
+  const host = document.getElementById("pdf-doc");
+  if (!host) { return; }
+  const url = "/api/file/" + p.filename;
+  try {
+    const pdfjs = await getPdfjs();
+    const doc = await pdfjs.getDocument(url).promise;
+    if (state.view !== "program" || state.programView !== p.id) { return; }  // navigated away
+    host.innerHTML = "";
+    const cssWidth = host.clientWidth || 360;
+    const dpr = window.devicePixelRatio || 1;
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: (cssWidth / base.width) * dpr });
+      const canvas = document.createElement("canvas");
+      canvas.className = "pdf-page";
+      canvas.width = vp.width;
+      canvas.height = vp.height;
+      canvas.style.width = "100%";
+      host.appendChild(canvas);
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    }
+  } catch (e) {
+    host.innerHTML = `<div class="empty">Couldn't render the PDF. <a class="text-btn" href="${url}" target="_blank" rel="noopener">Open it ↗</a></div>`;
+  }
+}
+
 function viewPrograms() {
   const cards = state.programs.map((p) => {
     const k = programKind(p.kind);
@@ -2642,7 +2679,9 @@ function viewProgram() {
   let doc = "";
   if (p.filename) {
     if (p.mime === "application/pdf") {
-      doc = `<iframe class="doc-frame" src="/api/file/${p.filename}" title="${escAttr(p.title)}"></iframe>
+      // Rendered to <canvas> by pdf.js (renderProgramPdf) — Android's webview won't
+      // display a PDF in an <iframe>, so we draw it ourselves.
+      doc = `<div class="pdf-doc" id="pdf-doc"><div class="empty">Loading PDF…</div></div>
         <a class="text-btn" style="display:block;text-align:center;margin-top:8px;" href="/api/file/${p.filename}" target="_blank" rel="noopener">Open full screen ↗</a>`;
     } else {
       doc = `<img class="doc-img" src="/api/file/${p.filename}" alt="${escAttr(p.title)}">`;
