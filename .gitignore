@@ -21,3 +21,7 @@ foundry-deploy.pub
 
 # Locally-synced server photos
 /photo-backup/
+
+# Local production-build test scratch (server + tesseract cache)
+app/.prod*
+app/.e2e-data
