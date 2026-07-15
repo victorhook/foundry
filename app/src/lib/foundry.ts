@@ -63,6 +63,7 @@ function load() {
     workouts: [],
     workoutThemes: [],
     templates: [],
+    programs: [],
     foods: [],
     meals: [],
     profile: { dob: null, height: null, gender: null, targets: { kcal: null, protein: null, carbs: null, fat: null } },
@@ -659,7 +660,25 @@ function openExerciseForm(exId) {
   state.picker.newTagText = "";
   state.picker.newBodyweight = ex ? !!ex.bodyweight : false;
   state.picker.newUnit = ex ? loadUnit(ex) : "kg";
+  state.picker.newImage = ex ? (ex.image || null) : null;
+  state.picker.imageBusy = false;
   go("picker"); // the form renders inside the picker view
+}
+
+// Upload an image for the exercise being created/edited (downscaled first).
+async function onExerciseImage(file) {
+  if (!file || !file.type || !file.type.startsWith("image/")) { return; }
+  state.picker.imageBusy = true; render();
+  try {
+    const blob = await downscale(file);
+    const fd = new FormData();
+    fd.append("file", blob, "image.jpg");
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!r.ok) { throw new Error("upload failed"); }
+    const out = await r.json();
+    state.picker.newImage = out.filename;
+  } catch (e) { toast("Image upload failed"); }
+  state.picker.imageBusy = false; render();
 }
 
 function toggleNewTag(tag) {
@@ -695,6 +714,7 @@ async function saveExercise() {
       muscles: tags,
       bodyweight: !!state.picker.newBodyweight,
       unit: state.picker.newUnit || "kg",
+      image: state.picker.newImage || null,
     });
   } catch (e) {
     toast("Couldn't save exercise");
@@ -823,7 +843,7 @@ function cancelWorkout() {
 function go(view) {
   const changed = view !== state.view;
   state.view = view;
-  state.menuOpen = false;
+  closeDrawer();
   save();
   if (changed) { pushState("", { v: view }); }  // SvelteKit shallow routing → phone Back walks the stack
   render();
@@ -838,7 +858,7 @@ function closeTopOverlay() {
   if (state.confirm) { state.confirm = null; render(); return true; }
   if (state.entryEdit) { state.entryEdit = null; render(); return true; }
   if (state.targetEdit) { state.targetEdit = null; render(); return true; }
-  if (state.menuOpen) { state.menuOpen = false; render(); return true; }
+  if (drawerIsOpen()) { closeDrawer(); return true; }
   return false;
 }
 
@@ -864,6 +884,9 @@ function render() {
   else if (state.view === "addfood") { html = viewAddFood(); }
   else if (state.view === "foodedit") { html = viewFoodEdit(); }
   else if (state.view === "mealedit") { html = viewMealEdit(); }
+  else if (state.view === "programs") { html = viewPrograms(); }
+  else if (state.view === "program") { html = viewProgram(); }
+  else if (state.view === "progedit") { html = viewProgramEdit(); }
   app.innerHTML = html + overlays();
   // Play the entrance animation only when the view actually changes, so
   // in-place updates (adding a set, toggling pain) don't re-animate everything.
@@ -880,7 +903,7 @@ function header(opts) {
   // exercise form is a special case that passes its own back act.
   const left = opts.back
     ? `<button class="back-btn" data-act="${opts.backAct || "nav-back"}">‹ ${opts.backLabel || "Back"}</button>`
-    : `<button class="iconbtn hamburger ${state.menuOpen ? "active" : ""}" data-act="menu-toggle" aria-label="Menu" aria-expanded="${!!state.menuOpen}">☰</button>`;
+    : `<button class="iconbtn hamburger" data-act="menu-toggle" aria-label="Menu">☰</button>`;
   let right = "";
   if (opts.dateLabel) {
     right = `<div class="timer">📅 ${opts.dateLabel}</div>`;
@@ -890,24 +913,49 @@ function header(opts) {
   return `<header class="bar">${left}<div class="spacer"></div>${right}</header>`;
 }
 
-// Slide-in navigation drawer (from the left). Opened by the hamburger or by a
-// swipe from the left edge; closed by tapping the scrim, swiping left, or Back.
-function menuPanel() {
-  if (!state.menuOpen) { return ""; }
-  const item = (act, icon, label) =>
-    `<button class="menu-item" data-act="${act}"><span class="menu-ico">${icon}</span>${label}</button>`;
-  return `<div class="menu-scrim" data-act="menu-close">
-    <nav class="menu-panel drawer" data-act="noop">
+// Persistent slide-in navigation drawer (from the left). Lives on <body> so it
+// survives re-renders and can follow the finger during a swipe. Opened by the
+// hamburger or an edge swipe; closed by tapping the scrim, swiping left, or Back.
+let drawerEl = null;
+function drawerIsOpen() { return !!drawerEl && drawerEl.classList.contains("open"); }
+function openDrawer() { if (drawerEl) { drawerEl.classList.add("open"); } }
+function closeDrawer() { if (drawerEl) { drawerEl.classList.remove("open"); } }
+function toggleDrawer() { drawerIsOpen() ? closeDrawer() : openDrawer(); }
+
+function buildDrawer() {
+  const root = document.createElement("div");
+  root.className = "drawer-root";
+  const item = (nav, icon, label) => `<button class="menu-item" data-nav="${nav}"><span class="menu-ico">${icon}</span>${label}</button>`;
+  root.innerHTML = `<div class="drawer-scrim" data-dw="close"></div>
+    <nav class="drawer-panel">
       <div class="drawer-head eyebrow">Foundry</div>
       ${item("home", "\u{1F3E0}", "Home")}
       ${item("nutrition", "\u{1F34E}", "Nutrition")}
       ${item("history", "\u{1F4D6}", "History")}
+      ${item("programs", "\u{1FA79}", "Programs")}
       ${item("photos", "\u{1F5BC}️", "Photos")}
       ${item("profile", "\u{1F464}", "Profile")}
       <div class="menu-sep"></div>
       ${item("logout", "⏻", "Sign out")}
-    </nav>
-  </div>`;
+    </nav>`;
+  document.body.appendChild(root);
+  root.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-nav]");
+    if (!b) {
+      if (e.target.closest('[data-dw="close"]')) { closeDrawer(); }
+      return;
+    }
+    closeDrawer();
+    const nav = b.dataset.nav;
+    if (nav === "logout") {
+      state.confirm = { title: "Sign out?", body: "You'll be logged out of Foundry.", ok: "Sign out", danger: true, onOk: () => { window.location.href = "/logout"; } };
+      render();
+    } else if (nav === "nutrition") { openNutrition(); }
+    else if (nav === "programs") { openPrograms(); }
+    else if (nav === "photos") { state.photoTag = null; go("photos"); }
+    else { go(nav); }
+  });
+  drawerEl = root;
 }
 
 // Generic centered confirmation dialog.
@@ -926,9 +974,10 @@ function confirmModal() {
   </div>`;
 }
 
-// Global overlays layered on top of whatever view is showing.
+// Global overlays layered on top of whatever view is showing. (The nav drawer is
+// a persistent element on <body>, managed outside render() for smooth gestures.)
 function overlays() {
-  return menuPanel() + confirmModal() + entryEditSheet() + targetsSheet();
+  return confirmModal() + entryEditSheet() + targetsSheet();
 }
 
 /* ---- Home ---- */
@@ -939,9 +988,18 @@ function viewHome() {
     ? recent.map(historyCard).join("")
     : `<div class="empty">No workouts yet.</div>`;
 
+  const now = new Date();
+  const hr = now.getHours();
+  const hi = hr < 5 ? "Late night" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
+  const dayLong = now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+
   return `<div class="app">
     ${header({})}
     <main>
+      <div class="home-hero">
+        <div class="hero-hi">${hi}</div>
+        <div class="hero-day">${dayLong}</div>
+      </div>
       ${calendarWidget()}
 
       <div class="section-head">
@@ -1380,7 +1438,11 @@ function pickerExercises() {
 }
 
 function pickerItemHtml(e) {
+  const thumb = e.image
+    ? `<img class="p-thumb" src="/api/file/${e.image}" loading="lazy" alt="">`
+    : `<span class="p-thumb p-thumb-empty">\u{1F3CB}️</span>`;
   return `<button class="ex-pick" data-act="pick" data-id="${e.id}">
+    ${thumb}
     <div style="flex:1;min-width:0;"><div class="p-name">${e.name}</div>
     <div class="p-muscle">${(e.muscles || []).join(" · ")}</div></div>
     <span class="p-add">+</span>
@@ -1443,6 +1505,15 @@ function viewExerciseForm() {
         <button class="chip ${state.picker.newUnit !== "sec" ? "active" : ""}" data-act="set-unit" data-unit="kg">kg</button>
         <button class="chip ${state.picker.newUnit === "sec" ? "active" : ""}" data-act="set-unit" data-unit="sec">sec (time)</button>
       </div>`}
+
+      <div class="eyebrow" style="margin:20px 2px 10px;">Image</div>
+      ${state.picker.newImage
+        ? `<div class="ex-img-edit">
+            <img class="ex-img-preview" src="/api/file/${state.picker.newImage}" alt="exercise">
+            <button class="chip" data-act="ex-img-remove">Remove</button>
+          </div>`
+        : `<button class="add-ex-btn" data-act="ex-img-pick" ${state.picker.imageBusy ? "disabled style=opacity:0.5" : ""}>${state.picker.imageBusy ? "Uploading…" : "＋ Add image"}</button>`}
+      <input type="file" accept="image/*" id="ex-img-file" data-act="ex-img-file" style="display:none">
     </main>
     <div class="footer">
       <button class="btn btn-ghost" data-act="close-create">Back</button>
@@ -1568,25 +1639,28 @@ function viewDetail() {
     return loadingShell("History", "history");
   }
 
-  const exHtml = w.entries.map((entry) => {
+  // Compact: one dense line per exercise (name + set summary), with pain/note
+  // folded underneath only when present.
+  const exHtml = `<div class="d-ex-list">${w.entries.map((entry) => {
     const ex = exById(entry.exerciseId);
-    let detail = "";
-    if (ex.type === "cardio" && entry.sets[0]) {
-      detail = `<div class="d-set"><span class="di">${describeSet(ex, entry.sets[0])}</span></div>`;
+    let summary = "";
+    if (ex.type === "cardio") {
+      summary = entry.sets[0] ? describeSet(ex, entry.sets[0]) : "";
     } else if (entry.sets.length) {
-      detail = entry.sets.map((s, i) =>
-        `<div class="d-set"><span>Set ${i + 1}</span><span class="di">${s.reps} × ${s.weight} kg</span></div>`
-      ).join("");
+      summary = entrySummary(ex, entry);
     }
-    const pain = entry.pain
-      ? `<div class="d-set"><span style="color:${heatColor(entry.pain.level)};font-weight:700;">⚠ ${entry.pain.cat} ${entry.pain.level}</span></div>`
-      : "";
-    const note = entry.note
-      ? `<div class="d-set" style="color:var(--muted);">${escAttr(entry.note)}</div>`
-      : "";
-    const tags = (ex.muscles || []).length ? ` <span style="color:var(--muted);font-weight:400;font-size:0.85rem;">${ex.muscles.join(" · ")}</span>` : "";
-    return `<div class="d-ex"><div class="d-ex-name">${ex.name}${tags}</div>${detail}${pain}${note}</div>`;
-  }).join("");
+    const img = ex.image ? `<img class="d-ex-img" src="/api/file/${ex.image}" loading="lazy" alt="">` : "";
+    const sub = [];
+    if (entry.pain) { sub.push(`<span style="color:${heatColor(entry.pain.level)};font-weight:700;">⚠ ${escAttr(entry.pain.cat)} ${entry.pain.level}</span>`); }
+    if (entry.note) { sub.push(`<span class="d-ex-note">${escAttr(entry.note)}</span>`); }
+    return `<div class="d-ex">
+      ${img}
+      <div class="d-ex-body">
+        <div class="d-ex-top"><span class="d-ex-name">${escAttr(ex.name)}</span><span class="d-ex-sum tnum">${summary}</span></div>
+        ${sub.length ? `<div class="d-ex-sub">${sub.join(" · ")}</div>` : ""}
+      </div>
+    </div>`;
+  }).join("")}</div>`;
 
   const painHtml = (w.pains || []).length
     ? `<div class="finish-block"><span class="eyebrow" style="display:block;margin-bottom:10px;">Pain logged</span><div class="pain-grid">${
@@ -2471,6 +2545,154 @@ function refreshFoodList(containerSel, rowsFn) {
   if (main) { main.innerHTML = rowsFn(); }
 }
 
+/* ============ Programs / rehab / events ============ */
+const PROGRAM_KINDS = [["program", "Program", "\u{1F3CB}️"], ["rehab", "Rehab", "\u{1FA79}"], ["event", "Event", "\u{1F4C5}"]];
+function programKind(k) { return PROGRAM_KINDS.find((x) => x[0] === k) || PROGRAM_KINDS[0]; }
+
+function openPrograms() { go("programs"); }
+function newProgram() {
+  state.programEdit = { id: null, title: "", kind: "rehab", startDate: todayISO(), notes: "", filename: null, mime: null, fileBusy: false };
+  go("progedit");
+}
+function editProgram(id) {
+  const p = state.programs.find((x) => x.id === id);
+  if (!p) { return; }
+  state.programEdit = { id: p.id, title: p.title, kind: p.kind, startDate: p.startDate || "", notes: p.notes || "", filename: p.filename, mime: p.mime, fileBusy: false };
+  go("progedit");
+}
+function openProgram(id) { state.programView = id; go("program"); }
+
+async function onProgramFile(file) {
+  if (!file) { return; }
+  const isPdf = file.type === "application/pdf";
+  if (!isPdf && !(file.type && file.type.startsWith("image/"))) { toast("PDF or image only"); return; }
+  state.programEdit.fileBusy = true; render();
+  try {
+    const blob = isPdf ? file : await downscale(file);
+    const fd = new FormData();
+    fd.append("file", blob, isPdf ? "doc.pdf" : "image.jpg");
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!r.ok) { throw new Error("upload failed"); }
+    const out = await r.json();
+    state.programEdit.filename = out.filename;
+    state.programEdit.mime = out.mime;
+  } catch (e) { toast("Upload failed"); }
+  state.programEdit.fileBusy = false; render();
+}
+
+async function saveProgramEdit() {
+  const p = state.programEdit;
+  if (!(p.title || "").trim()) { toast("Add a title"); return; }
+  let saved;
+  try {
+    saved = await apiPost("/api/programs", {
+      id: p.id || undefined, title: p.title.trim(), kind: p.kind,
+      startDate: p.startDate || null, notes: p.notes || "",
+      filename: p.filename ?? null, mime: p.mime ?? null,
+    });
+  } catch (e) { toast("Couldn't save"); return; }
+  const i = state.programs.findIndex((x) => x.id === saved.id);
+  if (i >= 0) { state.programs[i] = saved; } else { state.programs.unshift(saved); }
+  const wasEditing = !!p.id;
+  state.programEdit = null;
+  history.back();
+  toast(wasEditing ? "Updated ✓" : "Saved ✓");
+}
+function deleteProgramById(id) {
+  apiDelete("/api/programs", { id }).catch(() => {});
+  state.programs = state.programs.filter((p) => p.id !== id);
+  history.back();
+}
+
+function fmtDay(iso) {
+  if (!iso) { return ""; }
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d, 12).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function viewPrograms() {
+  const cards = state.programs.map((p) => {
+    const k = programKind(p.kind);
+    return `<button class="tpl-card" data-act="open-program" data-id="${p.id}">
+      <span class="tpl-ico">${k[2]}</span>
+      <span class="tpl-body">
+        <span class="tpl-name">${escAttr(p.title)}</span>
+        <span class="tpl-meta">${k[1]}${p.startDate ? " · from " + fmtDay(p.startDate) : ""}${p.filename ? " · 📄" : ""}</span>
+      </span>
+      <span class="tpl-go">›</span>
+    </button>`;
+  }).join("");
+  const body = state.programs.length
+    ? `<div class="tpl-list">${cards}</div>`
+    : `<div class="empty">No programs yet. Upload a training plan, rehab protocol, or event.</div>`;
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Home" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">Programs & rehab</span></div>
+      ${body}
+      <button class="add-ex-btn" data-act="new-program" style="margin-top:14px;">＋  Add program</button>
+    </main>
+  </div>`;
+}
+
+function viewProgram() {
+  const p = state.programs.find((x) => x.id === state.programView);
+  if (!p) { if (state.loaded) { go("programs"); return ""; } return loadingShell("Programs", "programs"); }
+  const k = programKind(p.kind);
+  let doc = "";
+  if (p.filename) {
+    if (p.mime === "application/pdf") {
+      doc = `<iframe class="doc-frame" src="/api/file/${p.filename}" title="${escAttr(p.title)}"></iframe>
+        <a class="text-btn" style="display:block;text-align:center;margin-top:8px;" href="/api/file/${p.filename}" target="_blank" rel="noopener">Open full screen ↗</a>`;
+    } else {
+      doc = `<img class="doc-img" src="/api/file/${p.filename}" alt="${escAttr(p.title)}">`;
+    }
+  }
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Programs" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">${k[1]}</span>
+        <button class="back-btn" data-act="edit-program" data-id="${p.id}">Edit ›</button></div>
+      <div class="prog-title">${k[2]} ${escAttr(p.title)}</div>
+      ${p.startDate ? `<div class="prog-meta">Starts ${fmtDay(p.startDate)}</div>` : ""}
+      ${p.notes ? `<div class="prog-notes">${escAttr(p.notes)}</div>` : ""}
+      ${doc || `<div class="empty" style="margin-top:14px;">No document attached.</div>`}
+    </main>
+  </div>`;
+}
+
+function viewProgramEdit() {
+  const p = state.programEdit;
+  if (!p) { go("programs"); return ""; }
+  const editing = !!p.id;
+  const kindChips = PROGRAM_KINDS.map(([k, label, ico]) =>
+    `<button class="chip ${p.kind === k ? "active" : ""}" data-act="prog-kind" data-kind="${k}">${ico} ${label}</button>`
+  ).join("");
+  const fileRow = p.filename
+    ? `<div class="ex-img-edit"><span class="pf-macro">${p.mime === "application/pdf" ? "📄 PDF attached" : "🖼️ Image attached"}</span>
+        <button class="chip" data-act="prog-file-remove">Remove</button></div>`
+    : `<button class="add-ex-btn" data-act="prog-file-pick" ${p.fileBusy ? "disabled style=opacity:0.5" : ""}>${p.fileBusy ? "Uploading…" : "＋ Attach PDF or image"}</button>`;
+  return `<div class="app">
+    ${header({ back: true, backLabel: editing ? "Back" : "Cancel" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">${editing ? "Edit program" : "New program"}</span></div>
+      <div class="finish-block"><span class="eyebrow">Title</span>
+        <input class="picker-search" placeholder="e.g. Left knee ACL rehab" value="${escAttr(p.title || "")}" data-act="prog-title" autofocus></div>
+      <div class="finish-block"><span class="eyebrow">Type</span><div class="chip-row">${kindChips}</div></div>
+      <div class="finish-block"><span class="eyebrow">Start date</span>
+        <input class="date-input" type="date" value="${p.startDate || ""}" data-act="prog-date"></div>
+      <div class="finish-block"><span class="eyebrow">Notes</span>
+        <textarea class="notes" data-act="prog-notes" placeholder="Anything to remember…">${escAttr(p.notes || "")}</textarea></div>
+      <div class="finish-block"><span class="eyebrow">Document</span>${fileRow}</div>
+      <input type="file" accept="application/pdf,image/*" id="program-file" data-act="program-file" style="display:none">
+    </main>
+    <div class="footer">
+      ${editing ? `<button class="btn btn-ghost" data-act="del-program" data-id="${p.id}">Delete</button>` : ""}
+      <button class="btn btn-primary" data-act="save-program">${editing ? "Save" : "Add program"}</button>
+    </div>
+  </div>`;
+}
+
 /* ============ Event delegation ============ */
 app.addEventListener("click", (e) => {
   const t = e.target.closest("[data-act]");
@@ -2481,10 +2703,9 @@ app.addEventListener("click", (e) => {
 
   switch (act) {
     case "nav-back": history.back(); break;
-    case "menu-toggle": state.menuOpen = !state.menuOpen; render(); break;
-    case "menu-close": state.menuOpen = false; render(); break;
+    case "menu-toggle": toggleDrawer(); break;
     case "logout":
-      state.menuOpen = false;
+      closeDrawer();
       state.confirm = {
         title: "Sign out?",
         body: "You'll be logged out of Foundry.",
@@ -2593,6 +2814,8 @@ app.addEventListener("click", (e) => {
     case "add-tag": addNewTag(state.picker.newTagText); break;
     case "toggle-bodyweight": state.picker.newBodyweight = !state.picker.newBodyweight; render(); break;
     case "set-unit": state.picker.newUnit = t.dataset.unit; render(); break;
+    case "ex-img-pick": { const el = document.getElementById("ex-img-file"); if (el) { el.click(); } break; }
+    case "ex-img-remove": state.picker.newImage = null; render(); break;
     case "save-ex": saveExercise(); break;
     case "feel": state.active.feel = parseInt(t.dataset.v, 10); save(); render(); break;
     case "energy": state.active.energy = parseInt(t.dataset.v, 10); save(); render(); break;
@@ -2664,6 +2887,28 @@ app.addEventListener("click", (e) => {
     case "entry-slot": state.entryEdit.slot = t.dataset.slot; render(); break;
     case "entry-qty-inc": state.entryEdit.qty = Math.round(((numOrNull(state.entryEdit.qty) || 1) + 0.5) * 10) / 10; render(); break;
     case "entry-qty-dec": state.entryEdit.qty = Math.max(0.5, Math.round(((numOrNull(state.entryEdit.qty) || 1) - 0.5) * 10) / 10); render(); break;
+
+    /* ---- Programs ---- */
+    case "programs": openPrograms(); break;
+    case "new-program": newProgram(); break;
+    case "open-program": openProgram(t.dataset.id); break;
+    case "edit-program": editProgram(t.dataset.id); break;
+    case "save-program": saveProgramEdit(); break;
+    case "prog-kind": state.programEdit.kind = t.dataset.kind; render(); break;
+    case "prog-file-pick": { const el = document.getElementById("program-file"); if (el) { el.click(); } break; }
+    case "prog-file-remove": state.programEdit.filename = null; state.programEdit.mime = null; render(); break;
+    case "del-program": {
+      const id = t.dataset.id;
+      const prog = state.programs.find((x) => x.id === id);
+      state.confirm = {
+        title: "Delete program?",
+        body: prog ? prog.title : "",
+        ok: "Delete", danger: true,
+        onOk: () => deleteProgramById(id),
+      };
+      render();
+      break;
+    }
   }
 });
 
@@ -2711,6 +2956,9 @@ app.addEventListener("input", (e) => {
   else if (act === "entry-qty") { state.entryEdit.qty = t.value; }
   else if (act === "entry-field") { state.entryEdit[t.dataset.field] = t.value; }
   else if (act === "target-field") { state.targetEdit[t.dataset.field] = t.value; }
+  else if (act === "prog-title") { state.programEdit.title = t.value; }
+  else if (act === "prog-date") { state.programEdit.startDate = t.value; }
+  else if (act === "prog-notes") { state.programEdit.notes = t.value; }
   else if (act === "wdate" && t.value) {
     const [y, m, d] = t.value.split("-").map(Number);
     state.active.startedAt = new Date(y, m - 1, d, 12).getTime();
@@ -2740,6 +2988,12 @@ app.addEventListener("change", (e) => {
   if (t && t.dataset.act === "photo-file") {
     onPhotoFile(t.files);
     t.value = ""; // allow re-picking the same file(s)
+  } else if (t && t.dataset.act === "ex-img-file") {
+    onExerciseImage(t.files && t.files[0]);
+    t.value = "";
+  } else if (t && t.dataset.act === "program-file") {
+    onProgramFile(t.files && t.files[0]);
+    t.value = "";
   }
 });
 
@@ -2755,9 +3009,10 @@ function updatePickerList() {
 }
 
 /* ============ Boot ============ */
-const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit"];
-const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit"];  // depend on non-persisted state
+const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit"];
+const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program"];  // depend on non-persisted state
 async function boot() {
+  buildDrawer();
   if (state.view === "active" && !state.active) { state.view = "home"; }
   // Transient editor views depend on ephemeral (non-persisted) state; a reload
   // lands them safely. Also maps any legacy view name (e.g. "newday") home.
@@ -2776,6 +3031,7 @@ async function boot() {
     state.workouts = data.workouts;
     state.workoutThemes = data.workoutThemes || [];
     state.templates = data.templates || [];
+    state.programs = data.programs || [];
     state.foods = data.foods || [];
     state.meals = data.meals || [];
     state.profile = data.profile || state.profile;
@@ -2843,29 +3099,53 @@ page.subscribe((p) => {
   // Workout-flow screens are meaningless once the session is gone (saved/discarded).
   const target = (v === "active" || v === "finish" || v === "picker") && !state.active ? "home" : v;
   state.view = target;
-  state.menuOpen = false;
+  closeDrawer();
   save();
   render();
   window.scrollTo(0, 0);
 });
 
-// Swipe navigation for the drawer: swipe right from the left edge to open,
-// swipe left to close. Kept lightweight (threshold on touchend).
-let swipeX = 0, swipeY = 0, swipeTracking = false;
+// Finger-following drawer swipe. Start within EDGE px of the left edge (drawer
+// closed) or anywhere while it's open; the panel tracks the finger, then snaps
+// open/closed on release based on how far it was dragged.
+const DRAWER_EDGE = 48;
+let dw = null;
 document.addEventListener("touchstart", (e) => {
-  if (e.touches.length !== 1) { swipeTracking = false; return; }
-  swipeX = e.touches[0].clientX;
-  swipeY = e.touches[0].clientY;
-  swipeTracking = true;
+  if (e.touches.length !== 1 || !drawerEl) { dw = null; return; }
+  const x = e.touches[0].clientX, y = e.touches[0].clientY;
+  const open = drawerIsOpen();
+  if (!open && x > DRAWER_EDGE) { dw = null; return; }
+  dw = { x0: x, y0: y, open, decided: false, horizontal: false, tx: open ? 0 : -1, panel: null, scrim: null, w: 0 };
 }, { passive: true });
-document.addEventListener("touchend", (e) => {
-  if (!swipeTracking) { return; }
-  swipeTracking = false;
-  const t = e.changedTouches[0];
-  const dx = t.clientX - swipeX, dy = t.clientY - swipeY;
-  if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) { return; }  // not a horizontal swipe
-  if (dx > 0 && swipeX < 30 && !state.menuOpen) { state.menuOpen = true; render(); }
-  else if (dx < 0 && state.menuOpen) { state.menuOpen = false; render(); }
+document.addEventListener("touchmove", (e) => {
+  if (!dw) { return; }
+  const x = e.touches[0].clientX, y = e.touches[0].clientY;
+  const dx = x - dw.x0, dy = y - dw.y0;
+  if (!dw.decided) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) { return; }
+    dw.horizontal = Math.abs(dx) > Math.abs(dy);
+    dw.decided = true;
+    if (!dw.horizontal) { dw = null; return; }  // vertical → let the page scroll
+    dw.panel = drawerEl.querySelector(".drawer-panel");
+    dw.scrim = drawerEl.querySelector(".drawer-scrim");
+    dw.w = dw.panel.offsetWidth;
+    drawerEl.classList.add("dragging", "open");
+  }
+  const w = dw.w;
+  let tx = dw.open ? Math.min(0, dx) : Math.max(-w, -w + Math.max(0, dx));
+  tx = Math.max(-w, Math.min(0, tx));
+  dw.tx = tx;
+  dw.panel.style.transform = `translateX(${tx}px)`;
+  dw.scrim.style.opacity = String(1 + tx / w);
+}, { passive: true });
+document.addEventListener("touchend", () => {
+  if (!dw) { return; }
+  const d = dw; dw = null;
+  if (!d.decided || !d.horizontal) { return; }
+  drawerEl.classList.remove("dragging");
+  if (d.tx > -d.w / 2) { drawerEl.classList.add("open"); } else { drawerEl.classList.remove("open"); }
+  d.panel.style.transform = "";
+  d.scrim.style.opacity = "";
 }, { passive: true });
 
 boot();

@@ -471,10 +471,21 @@
   .dstat { flex: 1; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
   .dstat .v { font-size: 1.5rem; font-weight: 800; }
   .dstat .k { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
-  .d-ex { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px; }
-  .d-ex .d-ex-name { font-weight: 700; margin-bottom: 8px; }
-  .d-set { display: flex; gap: 10px; font-size: 0.9rem; color: var(--muted); padding: 3px 0; }
-  .d-set .di { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+  /* Compact workout summary: one dense row per exercise */
+  .d-ex-list { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .d-ex { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+  .d-ex:last-child { border-bottom: none; }
+  .d-ex-img { width: 38px; height: 38px; border-radius: 9px; object-fit: cover; flex-shrink: 0; background: var(--surface-2); }
+  .d-ex-body { flex: 1; min-width: 0; }
+  .d-ex-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .d-ex-name { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .d-ex-sum { color: var(--muted); font-size: 0.85rem; flex-shrink: 0; }
+  .d-ex-sub { font-size: 0.8rem; color: var(--muted); margin-top: 3px; }
+  .d-ex-note { color: var(--muted); }
+
+  /* Picker exercise thumbnail */
+  .p-thumb { width: 40px; height: 40px; border-radius: 9px; object-fit: cover; flex-shrink: 0; background: var(--surface-2); }
+  .p-thumb-empty { display: grid; place-items: center; font-size: 1.1rem; opacity: 0.5; }
 
   .toast {
     position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%) translateY(20px);
@@ -608,24 +619,28 @@
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
 
-  /* ---------- Navigation drawer ---------- */
+  /* ---------- Navigation drawer (persistent, gesture-driven) ---------- */
   .hamburger { font-size: 1.25rem; }
-  .hamburger.active { color: var(--accent); border-color: var(--accent); }
-  .menu-scrim {
-    position: fixed; inset: 0; z-index: 50;
-    background: rgba(10, 12, 15, 0.5);
-    display: flex; justify-content: flex-start; align-items: stretch;
-    animation: fadeIn 0.18s ease both;
+  .drawer-root { position: fixed; inset: 0; z-index: 50; pointer-events: none; }
+  .drawer-root.open, .drawer-root.dragging { pointer-events: auto; }
+  .drawer-scrim {
+    position: absolute; inset: 0; background: rgba(10, 12, 15, 0.5);
+    opacity: 0; transition: opacity 0.28s ease;
   }
-  .menu-panel.drawer {
-    width: min(280px, 82vw); height: 100%;
+  .drawer-root.open .drawer-scrim { opacity: 1; }
+  .drawer-panel {
+    position: absolute; top: 0; left: 0; height: 100%;
+    width: min(280px, 82vw);
     background: var(--surface); border-right: 1px solid var(--line);
-    padding: calc(env(safe-area-inset-top) + 16px) 10px calc(env(safe-area-inset-bottom) + 16px);
     box-shadow: 10px 0 44px rgba(0, 0, 0, 0.45);
+    padding: calc(env(safe-area-inset-top) + 16px) 10px calc(env(safe-area-inset-bottom) + 16px);
     display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
-    animation: drawerIn 0.24s cubic-bezier(0.22, 0.9, 0.26, 1) both;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.22, 0.9, 0.26, 1);
+    will-change: transform;
   }
-  @keyframes drawerIn { from { transform: translateX(-100%); } to { transform: none; } }
+  .drawer-root.open .drawer-panel { transform: translateX(0); }
+  .drawer-root.dragging .drawer-scrim, .drawer-root.dragging .drawer-panel { transition: none; }
   .drawer-head { padding: 6px 12px 16px; color: var(--muted-2); }
   .menu-item {
     display: flex; align-items: center; gap: 14px; width: 100%;
@@ -745,6 +760,29 @@
   .pf-edit:active { color: var(--accent); background: var(--surface-2); }
 
   .meal-chooser { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+
+  /* ---------- Home hero ---------- */
+  .home-hero { margin: 4px 2px 4px; }
+  .hero-hi { font-size: 1.55rem; font-weight: 800; letter-spacing: -0.02em; }
+  .hero-day { font-size: 0.9rem; color: var(--muted); margin-top: 3px; }
+
+  /* ---------- Exercise image (form) ---------- */
+  .ex-img-edit { display: flex; align-items: center; gap: 12px; }
+  .ex-img-preview { width: 84px; height: 84px; border-radius: 12px; object-fit: cover; background: var(--surface-2); border: 1px solid var(--line); }
+
+  /* ---------- Programs / documents ---------- */
+  .prog-title { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; margin: 4px 0 2px; }
+  .prog-meta { color: var(--muted); font-size: 0.9rem; margin-bottom: 12px; }
+  .prog-notes {
+    color: var(--text); line-height: 1.6; white-space: pre-wrap;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px; margin-bottom: 16px;
+  }
+  .doc-frame {
+    width: 100%; height: 68vh; border: 1px solid var(--line);
+    border-radius: 12px; background: #fff;
+  }
+  .doc-img { width: 100%; border-radius: 12px; border: 1px solid var(--line); }
 
   /* ---------- Drag to reorder ---------- */
   .drag-handle {
