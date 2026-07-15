@@ -111,6 +111,44 @@ test('edit the date of a saved workout', async ({ page }) => {
 	await expect(page.locator('[data-act="detail-date"]')).toHaveValue('2023-01-15');
 });
 
+test('notes: add a date-bound note and it persists', async ({ page }) => {
+	await login(page);
+	await menuNav(page, 'Notes');
+	await page.getByRole('button', { name: /Add note/ }).click();
+	await page.locator('[data-act="note-date"]').fill('2024-05-20');
+	await page.locator('[data-act="note-text"]').fill('Felt strong, knee stable');
+	await page.getByRole('button', { name: 'Add note', exact: true }).click();
+
+	await expect(page.locator('.note-text', { hasText: 'Felt strong' })).toBeVisible();
+	await page.reload();
+	await expect(page.locator('.note-text', { hasText: 'Felt strong' })).toBeVisible();
+});
+
+test('tap an exercise in the summary opens its info, and Edit works', async ({ page }) => {
+	await login(page);
+	await startRoutine(page, 'Gym');
+	await page.getByRole('button', { name: /Add exercise/ }).click();
+	await page.getByRole('button', { name: /New exercise/ }).click();
+	await page.getByPlaceholder('Name').fill('Deadlift');
+	await page.getByRole('button', { name: 'Legs' }).click();
+	await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
+	await page.getByRole('button', { name: /Add set/ }).click();
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+	await page.getByRole('button', { name: /Save workout/ }).click();
+
+	// Open the workout, then tap the exercise → info screen.
+	await page.locator('.hcard').first().click();
+	await page.locator('.d-ex', { hasText: 'Deadlift' }).click();
+	await expect(page.locator('.exinfo-name', { hasText: 'Deadlift' })).toBeVisible();
+
+	// Edit from the info screen; the change reflects back.
+	await page.getByRole('button', { name: /Edit/ }).click();
+	await expect(page.getByPlaceholder('Name')).toHaveValue('Deadlift');
+	await page.getByPlaceholder('Name').fill('Deadlift (trap bar)');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.locator('.exinfo-name', { hasText: 'trap bar' })).toBeVisible();
+});
+
 test('gym workout theme shows in the summary', async ({ page }) => {
 	await login(page);
 	await startRoutine(page, 'Gym');

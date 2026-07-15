@@ -217,7 +217,16 @@ const migrations: Array<(d: Database.Database) => void> = [
 			start_date TEXT,
 			notes TEXT,
 			created_at INTEGER NOT NULL
-		)`)
+		)`),
+	// v15 -> v16: free-text notes bound to a date (daily status journal).
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS note (
+			id TEXT PRIMARY KEY,
+			day TEXT NOT NULL,
+			text TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_note_day ON note(day)`)
 ];
 
 function migrate() {
@@ -558,6 +567,35 @@ export function updateProgram(id: string, p: any) {
 	return getPrograms().find((x) => x.id === id) || null;
 }
 
+/* ---- Date-bound notes (daily status journal) ---- */
+export function getNotes() {
+	return db
+		.prepare('SELECT id, day, text, created_at FROM note ORDER BY day DESC, created_at DESC')
+		.all()
+		.map((r: any) => ({ id: r.id, day: r.day, text: r.text, createdAt: r.created_at }));
+}
+
+export function createNote(day: string, text: string) {
+	const id = uid();
+	db.prepare('INSERT INTO note (id, day, text, created_at) VALUES (?, ?, ?, ?)').run(id, day, text, Date.now());
+	return getNotes().find((n) => n.id === id) || null;
+}
+
+export function updateNote(id: string, patch: { day?: string; text?: string }) {
+	const cur = db.prepare('SELECT day, text FROM note WHERE id = ?').get(id) as any;
+	if (!cur) { return null; }
+	db.prepare('UPDATE note SET day = ?, text = ? WHERE id = ?').run(
+		patch.day ?? cur.day,
+		patch.text !== undefined ? patch.text : cur.text,
+		id
+	);
+	return getNotes().find((n) => n.id === id) || null;
+}
+
+export function deleteNote(id: string) {
+	db.prepare('DELETE FROM note WHERE id = ?').run(id);
+}
+
 export function getProgramFile(id: string) {
 	return db.prepare('SELECT filename, mime FROM program WHERE id = ?').get(id) as
 		| { filename: string; mime: string }
@@ -700,6 +738,7 @@ export function getAllData() {
 		workoutThemes: getWorkoutThemes(),
 		templates: getTemplates(),
 		programs: getPrograms(),
+		notes: getNotes(),
 		foods: getFoods(),
 		meals: getMeals(),
 		profile: getProfile(),

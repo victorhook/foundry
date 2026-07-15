@@ -64,6 +64,7 @@ function load() {
     workoutThemes: [],
     templates: [],
     programs: [],
+    notes: [],
     foods: [],
     meals: [],
     profile: { dob: null, height: null, gender: null, targets: { kcal: null, protein: null, carbs: null, fat: null } },
@@ -887,6 +888,9 @@ function render() {
   else if (state.view === "programs") { html = viewPrograms(); }
   else if (state.view === "program") { html = viewProgram(); }
   else if (state.view === "progedit") { html = viewProgramEdit(); }
+  else if (state.view === "notes") { html = viewNotes(); }
+  else if (state.view === "noteedit") { html = viewNoteEdit(); }
+  else if (state.view === "exinfo") { html = viewExInfo(); }
   app.innerHTML = html + overlays();
   // Play the entrance animation only when the view actually changes, so
   // in-place updates (adding a set, toggling pain) don't re-animate everything.
@@ -933,6 +937,7 @@ function buildDrawer() {
       ${item("home", "\u{1F3E0}", "Home")}
       ${item("nutrition", "\u{1F34E}", "Nutrition")}
       ${item("history", "\u{1F4D6}", "History")}
+      ${item("notes", "\u{1F4DD}", "Notes")}
       ${item("programs", "\u{1FA79}", "Programs")}
       ${item("photos", "\u{1F5BC}️", "Photos")}
       ${item("profile", "\u{1F464}", "Profile")}
@@ -953,6 +958,7 @@ function buildDrawer() {
       render();
     } else if (nav === "nutrition") { openNutrition(); }
     else if (nav === "programs") { openPrograms(); }
+    else if (nav === "notes") { openNotes(); }
     else if (nav === "photos") { state.photoTag = null; go("photos"); }
     else { go(nav); }
   });
@@ -1647,13 +1653,14 @@ function viewDetail() {
     const sub = [];
     if (entry.pain) { sub.push(`<span style="color:${heatColor(entry.pain.level)};font-weight:700;">⚠ ${escAttr(entry.pain.cat)} ${entry.pain.level}</span>`); }
     if (entry.note) { sub.push(`<span class="d-ex-note">${escAttr(entry.note)}</span>`); }
-    return `<div class="d-ex">
+    return `<button class="d-ex" data-act="ex-info" data-id="${escAttr(ex.id)}">
       ${img}
       <div class="d-ex-body">
         <div class="d-ex-top"><span class="d-ex-name">${escAttr(ex.name)}</span><span class="d-ex-sum tnum">${summary}</span></div>
         ${sub.length ? `<div class="d-ex-sub">${sub.join(" · ")}</div>` : ""}
       </div>
-    </div>`;
+      <span class="d-ex-chev">›</span>
+    </button>`;
   }).join("")}</div>`;
 
   const painHtml = (w.pains || []).length
@@ -1695,6 +1702,48 @@ function viewDetail() {
     <div class="footer">
       <button class="btn btn-primary" data-act="repeat" data-id="${w.id}">↻  Repeat this workout</button>
     </div>
+  </div>`;
+}
+
+/* ---- Exercise info (tapped from a workout summary) ---- */
+function openExInfo(id) { state.exInfoId = id; go("exinfo"); }
+
+function exStats(id) {
+  let count = 0, lastAt = 0, lastSets = null;
+  for (const w of state.workouts) {
+    const e = w.entries.find((en) => en.exerciseId === id);
+    if (e) { count++; if (w.startedAt > lastAt) { lastAt = w.startedAt; lastSets = e.sets; } }
+  }
+  return { count, lastAt, lastSets };
+}
+
+function viewExInfo() {
+  const ex = state.exInfoId ? exById(state.exInfoId) : null;
+  if (!ex) { go("history"); return ""; }
+  const st = exStats(ex.id);
+  const canEdit = ex.type !== "cardio";
+  const img = ex.image
+    ? `<img class="exinfo-img" src="/api/file/${ex.image}" alt="${escAttr(ex.name)}">`
+    : `<div class="exinfo-img exinfo-img-empty">\u{1F3CB}️</div>`;
+  const tags = (ex.muscles || []).length
+    ? `<div class="ex-tags" style="justify-content:center;margin-top:10px;">${ex.muscles.map((m) => `<span class="ex-tag">${escAttr(m)}</span>`).join("")}</div>`
+    : "";
+  const lastStr = st.lastAt ? fmtDate(st.lastAt) : "—";
+  const lastSets = st.lastSets && st.lastSets.length
+    ? st.lastSets.map((s) => ex.type === "cardio" ? describeSet(ex, s) : (ex.bodyweight || s.weight == null ? `${s.reps}` : `${s.reps} × ${s.weight} ${loadUnit(ex)}`)).join("  ·  ")
+    : "";
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Back", action: canEdit ? `<button class="back-btn" data-act="edit-ex" data-id="${ex.id}">Edit ›</button>` : "" })}
+    <main>
+      ${img}
+      <div class="exinfo-name">${escAttr(ex.name)}</div>
+      ${tags}
+      <div class="detail-stat-row" style="margin-top:18px;">
+        <div class="dstat"><div class="v tnum">${st.count}</div><div class="k">Times done</div></div>
+        <div class="dstat"><div class="v" style="font-size:1.05rem;">${lastStr}</div><div class="k">Last</div></div>
+      </div>
+      ${lastSets ? `<div class="finish-block" style="margin-top:16px;"><span class="eyebrow">Last time</span><div class="prog-notes tnum">${lastSets}</div></div>` : ""}
+    </main>
   </div>`;
 }
 
@@ -2610,8 +2659,10 @@ let pdfjsLib = null;
 async function getPdfjs() {
   if (!pdfjsLib) {
     pdfjsLib = await import("pdfjs-dist");
-    const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-    pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+    // Bundle the worker (Vite ?worker) and hand it over as a port. More robust
+    // across PWA/service-worker environments than pointing workerSrc at a URL.
+    const PdfWorker = (await import("pdfjs-dist/build/pdf.worker.min.mjs?worker")).default;
+    pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker();
   }
   return pdfjsLib;
 }
@@ -2728,6 +2779,80 @@ function viewProgramEdit() {
     <div class="footer">
       ${editing ? `<button class="btn btn-ghost" data-act="del-program" data-id="${p.id}">Delete</button>` : ""}
       <button class="btn btn-primary" data-act="save-program">${editing ? "Save" : "Add program"}</button>
+    </div>
+  </div>`;
+}
+
+/* ============ Notes (date-bound journal) ============ */
+function openNotes() { state.notesQ = ""; go("notes"); }
+function newNote() {
+  state.noteEdit = { id: null, day: todayISO(), text: "" };
+  go("noteedit");
+}
+function editNote(id) {
+  const n = state.notes.find((x) => x.id === id);
+  if (!n) { return; }
+  state.noteEdit = { id: n.id, day: n.day, text: n.text };
+  go("noteedit");
+}
+async function saveNoteEdit() {
+  const n = state.noteEdit;
+  if (!(n.text || "").trim()) { toast("Write something first"); return; }
+  let saved;
+  try {
+    saved = await apiPost("/api/notes", { id: n.id || undefined, day: n.day, text: n.text.trim() });
+  } catch (e) { toast("Couldn't save note"); return; }
+  const i = state.notes.findIndex((x) => x.id === saved.id);
+  if (i >= 0) { state.notes[i] = saved; } else { state.notes.push(saved); }
+  state.notes.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : b.createdAt - a.createdAt));
+  const wasEditing = !!n.id;
+  state.noteEdit = null;
+  history.back();
+  toast(wasEditing ? "Note updated ✓" : "Note saved ✓");
+}
+function deleteNoteById(id) {
+  apiDelete("/api/notes", { id }).catch(() => {});
+  state.notes = state.notes.filter((n) => n.id !== id);
+  history.back();
+}
+
+function viewNotes() {
+  const q = (state.notesQ || "").toLowerCase();
+  const list = state.notes.filter((n) => !q || n.text.toLowerCase().includes(q));
+  const cards = list.map((n) => `<button class="note-card" data-act="edit-note" data-id="${n.id}">
+    <div class="note-date">${fmtDay(n.day)}</div>
+    <div class="note-text">${escAttr(n.text)}</div>
+  </button>`).join("");
+  const body = state.notes.length
+    ? `<input class="picker-search" placeholder="Search notes…" value="${escAttr(state.notesQ || "")}" data-act="notes-q">
+       ${list.length ? `<div class="note-list">${cards}</div>` : `<div class="empty">No notes match.</div>`}`
+    : `<div class="empty">No notes yet. Jot a daily status, how you felt, anything to look back on.</div>`;
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Home" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">Notes</span></div>
+      ${body}
+      <button class="add-ex-btn" data-act="new-note" style="margin-top:14px;">＋  Add note</button>
+    </main>
+  </div>`;
+}
+
+function viewNoteEdit() {
+  const n = state.noteEdit;
+  if (!n) { go("notes"); return ""; }
+  const editing = !!n.id;
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Notes" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">${editing ? "Edit note" : "New note"}</span></div>
+      <div class="finish-block"><span class="eyebrow">Date</span>
+        <input class="date-input" type="date" value="${n.day}" data-act="note-date"></div>
+      <div class="finish-block"><span class="eyebrow">Note</span>
+        <textarea class="notes note-textarea" data-act="note-text" placeholder="How did today go?" autofocus>${escAttr(n.text || "")}</textarea></div>
+    </main>
+    <div class="footer">
+      ${editing ? `<button class="btn btn-ghost" data-act="del-note" data-id="${n.id}">Delete</button>` : ""}
+      <button class="btn btn-primary" data-act="save-note">${editing ? "Save" : "Add note"}</button>
     </div>
   </div>`;
 }
@@ -2948,6 +3073,21 @@ app.addEventListener("click", (e) => {
       render();
       break;
     }
+
+    /* ---- Notes ---- */
+    case "notes": openNotes(); break;
+    case "new-note": newNote(); break;
+    case "edit-note": editNote(t.dataset.id); break;
+    case "save-note": saveNoteEdit(); break;
+    case "del-note": {
+      const id = t.dataset.id;
+      state.confirm = { title: "Delete note?", ok: "Delete", danger: true, onOk: () => deleteNoteById(id) };
+      render();
+      break;
+    }
+
+    /* ---- Exercise info (from workout summary) ---- */
+    case "ex-info": openExInfo(t.dataset.id); break;
   }
 });
 
@@ -2998,6 +3138,16 @@ app.addEventListener("input", (e) => {
   else if (act === "prog-title") { state.programEdit.title = t.value; }
   else if (act === "prog-date") { state.programEdit.startDate = t.value; }
   else if (act === "prog-notes") { state.programEdit.notes = t.value; }
+  else if (act === "notes-q") {
+    state.notesQ = t.value;
+    refreshFoodList(".note-list", () => {
+      const q = (state.notesQ || "").toLowerCase();
+      const list = state.notes.filter((n) => !q || n.text.toLowerCase().includes(q));
+      return list.map((n) => `<button class="note-card" data-act="edit-note" data-id="${n.id}"><div class="note-date">${fmtDay(n.day)}</div><div class="note-text">${escAttr(n.text)}</div></button>`).join("");
+    });
+  }
+  else if (act === "note-date") { state.noteEdit.day = t.value; }
+  else if (act === "note-text") { state.noteEdit.text = t.value; }
   else if (act === "wdate" && t.value) {
     const [y, m, d] = t.value.split("-").map(Number);
     state.active.startedAt = new Date(y, m - 1, d, 12).getTime();
@@ -3048,10 +3198,11 @@ function updatePickerList() {
 }
 
 /* ============ Boot ============ */
-const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit"];
-const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program"];  // depend on non-persisted state
+const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit", "notes", "noteedit", "exinfo"];
+const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program", "noteedit", "exinfo"];  // depend on non-persisted state
 async function boot() {
   buildDrawer();
+  buildPtr();
   if (state.view === "active" && !state.active) { state.view = "home"; }
   // Transient editor views depend on ephemeral (non-persisted) state; a reload
   // lands them safely. Also maps any legacy view name (e.g. "newday") home.
@@ -3071,6 +3222,7 @@ async function boot() {
     state.workoutThemes = data.workoutThemes || [];
     state.templates = data.templates || [];
     state.programs = data.programs || [];
+    state.notes = data.notes || [];
     state.foods = data.foods || [];
     state.meals = data.meals || [];
     state.profile = data.profile || state.profile;
@@ -3185,6 +3337,52 @@ document.addEventListener("touchend", () => {
   if (d.tx > -d.w / 2) { drawerEl.classList.add("open"); } else { drawerEl.classList.remove("open"); }
   d.panel.style.transform = "";
   d.scrim.style.opacity = "";
+}, { passive: true });
+
+/* ---- Pull-to-refresh (native is disabled by overscroll-behavior) ---- */
+let ptrEl = null;
+let ptr = null;
+const PTR_MAX = 110, PTR_TRIGGER = 70;
+function buildPtr() {
+  ptrEl = document.createElement("div");
+  ptrEl.className = "ptr";
+  ptrEl.innerHTML = `<span class="ptr-spin">↻</span>`;
+  document.body.appendChild(ptrEl);
+}
+function anyOverlay() {
+  return drawerIsOpen() || state.confirm || state.entryEdit || state.targetEdit || state.pendingUpload || state.viewPhotoId;
+}
+document.addEventListener("touchstart", (e) => {
+  if (e.touches.length !== 1 || drag || anyOverlay()) { ptr = null; return; }
+  if (e.target.closest("[data-drag]")) { ptr = null; return; }        // exercise reorder
+  if ((window.scrollY || document.documentElement.scrollTop || 0) > 0) { ptr = null; return; }
+  ptr = { y0: e.touches[0].clientY, pull: 0, active: false };
+}, { passive: true });
+document.addEventListener("touchmove", (e) => {
+  if (!ptr) { return; }
+  const dy = e.touches[0].clientY - ptr.y0;
+  if (dy <= 0 && !ptr.active) { ptr = null; return; }
+  ptr.active = true;
+  ptr.pull = Math.min(Math.max(0, dy), PTR_MAX);
+  ptrEl.style.transition = "none";
+  ptrEl.style.transform = `translateX(-50%) translateY(${ptr.pull}px)`;
+  ptrEl.style.opacity = String(Math.min(1, ptr.pull / PTR_TRIGGER));
+  ptrEl.classList.toggle("ready", ptr.pull >= PTR_TRIGGER);
+}, { passive: true });
+document.addEventListener("touchend", () => {
+  if (!ptr) { return; }
+  const trigger = ptr.pull >= PTR_TRIGGER;
+  ptr = null;
+  ptrEl.style.transition = "";
+  if (trigger) {
+    ptrEl.classList.add("spinning");
+    ptrEl.style.transform = `translateX(-50%) translateY(${PTR_TRIGGER}px)`;
+    location.reload();
+  } else {
+    ptrEl.style.transform = "translateX(-50%) translateY(-100%)";
+    ptrEl.style.opacity = "0";
+    ptrEl.classList.remove("ready");
+  }
 }, { passive: true });
 
 boot();
