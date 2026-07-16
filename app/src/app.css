@@ -265,6 +265,38 @@
   }
   .step-val::-webkit-outer-spin-button, .step-val::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
+  /* Column headings above the strength set rows (Set / Reps / Kg) */
+  .sets-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px 4px;
+  }
+  .sets-head span, .sh-cols span {
+    font-size: 0.62rem; font-weight: 700; letter-spacing: 0.07em;
+    text-transform: uppercase; color: var(--muted-2);
+  }
+  .sh-num { width: 24px; text-align: center; flex-shrink: 0; }
+  .sh-cols { flex: 1; display: flex; gap: 10px; }
+  .sh-cols span { flex: 1; text-align: center; }
+  .sh-del { width: 22px; flex-shrink: 0; }
+
+  /* Workout overview: at-a-glance totals under the title */
+  .wk-stats {
+    display: flex; gap: 10px; margin: 0 0 16px;
+  }
+  .wk-stat {
+    flex: 1; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 12px 8px;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  .wk-val { font-size: 1.4rem; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .wk-lbl { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+
+  .wk-empty {
+    text-align: center; color: var(--muted); padding: 26px 16px; margin-bottom: 4px;
+    border: 1px dashed var(--line); border-radius: var(--radius); font-weight: 600;
+  }
+  .wk-empty span { color: var(--muted-2); font-weight: 500; font-size: 0.86rem; }
+
   .rpe-dot {
     width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
     display: grid; place-items: center; font-size: 0.78rem; font-weight: 800;

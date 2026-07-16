@@ -1277,13 +1277,54 @@ function levelBtns(act, ei, selected) {
 }
 
 /* ---- Active ---- */
+// At-a-glance totals for the workout overview strip.
+function workoutStats(w) {
+  let sets = 0, volume = 0, minutes = 0, km = 0, cardio = 0;
+  w.entries.forEach((en) => {
+    const ex = exById(en.exerciseId);
+    if (ex.type === "cardio") {
+      cardio++;
+      const s = en.sets[0] || {};
+      minutes += Number(s.duration) || 0;
+      km += Number(s.distance) || 0;
+    } else {
+      sets += en.sets.length;
+      en.sets.forEach((s) => {
+        if (!ex.bodyweight && s.weight != null) { volume += (Number(s.reps) || 0) * (Number(s.weight) || 0); }
+      });
+    }
+  });
+  return { ex: w.entries.length, sets, volume, minutes, km, cardio };
+}
+
+function statTile(val, lbl) {
+  return `<div class="wk-stat"><span class="wk-val">${val}</span><span class="wk-lbl">${lbl}</span></div>`;
+}
+
+function workoutOverview(w) {
+  if (!w.entries.length) { return ""; }
+  const st = workoutStats(w);
+  const tiles = [statTile(st.ex, st.ex === 1 ? "exercise" : "exercises")];
+  if (st.sets) { tiles.push(statTile(st.sets, st.sets === 1 ? "set" : "sets")); }
+  if (st.volume > 0) {
+    const v = st.volume >= 1000 ? (st.volume / 1000).toFixed(st.volume >= 10000 ? 0 : 1) + "k" : String(Math.round(st.volume));
+    tiles.push(statTile(v, "kg volume"));
+  } else if (st.minutes) {
+    tiles.push(statTile(st.minutes, "min"));
+    if (st.km > 0) { tiles.push(statTile(st.km, "km")); }
+  }
+  return `<div class="wk-stats">${tiles.join("")}</div>`;
+}
+
 function viewActive() {
   const w = state.active;
   if (!w) { go("home"); return ""; }
 
   const exHtml = w.entries.map((entry, ei) => entryCard(entry, ei)).join("");
 
-  const body = w.entries.length ? exHtml : "";
+  const body = w.entries.length
+    ? exHtml
+    : `<div class="wk-empty">No exercises yet.<br><span>Add your first below.</span></div>`;
 
   return `<div class="app">
     ${header({ dateLabel: fmtDate(w.startedAt) })}
@@ -1292,6 +1333,7 @@ function viewActive() {
         <span class="eyebrow">${w.routineName || "Workout"}</span>
         <button class="discard-btn" data-act="cancel">Discard</button>
       </div>
+      ${workoutOverview(w)}
       ${body}
       <button class="add-ex-btn" data-act="open-picker" style="margin-top:4px;">+  Add exercise</button>
     </main>
@@ -1346,17 +1388,29 @@ function entryCard(entry, ei) {
       ${stepper(ei, 0, "distance", s.distance, "km")}
     </div></div>`;
   } else {
-    // Strength: optional sets. Bodyweight = reps only; else reps + load (kg/sec).
+    // Strength: optional sets laid out as an aligned table with column headers,
+    // so reps/weight read clearly at a glance. Bodyweight = reps only.
     const unit = loadUnit(ex);
+    const showW = !ex.bodyweight;
+    const head = entry.sets.length
+      ? `<div class="sets-head">
+          <span class="sh-num">Set</span>
+          <div class="sh-cols">
+            <span>Reps</span>
+            ${showW ? `<span>${unit === "sec" ? "Sec" : "Kg"}</span>` : ""}
+          </div>
+          <span class="sh-del"></span>
+        </div>`
+      : "";
     const setRows = entry.sets.map((s, si) => `<div class="set-row">
       <span class="set-num tnum">${si + 1}</span>
       <div class="set-fields">
-        ${stepper(ei, si, "reps", s.reps, "reps")}
-        ${ex.bodyweight ? "" : stepper(ei, si, "weight", s.weight, unit)}
+        ${setStepper(ei, si, "reps", s.reps)}
+        ${showW ? setStepper(ei, si, "weight", s.weight) : ""}
       </div>
       <button class="set-del" data-act="del-set" data-ei="${ei}" data-si="${si}" aria-label="Remove set">×</button>
     </div>`).join("");
-    bodyRows = `${setRows}<button class="addset" data-act="add-set" data-ei="${ei}">+ Add set</button>`;
+    bodyRows = `${head}${setRows}<button class="addset" data-act="add-set" data-ei="${ei}">+ Add set</button>`;
   }
 
   const tagsHtml = (ex.muscles || []).length
@@ -1428,6 +1482,17 @@ function stepper(ei, si, field, value, label) {
     <button class="step-btn" data-act="dec" data-ei="${ei}" data-si="${si}" data-field="${field}">−</button>
     <input class="step-val tnum" type="number" inputmode="decimal" value="${value}"
       data-act="setfield" data-ei="${ei}" data-si="${si}" data-field="${field}" aria-label="${label}">
+    <button class="step-btn" data-act="inc" data-ei="${ei}" data-si="${si}" data-field="${field}">+</button>
+  </div>`;
+}
+
+// Label-less stepper for strength sets (the sets-head row provides the column
+// headings, so per-cell labels would be redundant clutter).
+function setStepper(ei, si, field, value) {
+  return `<div class="step-grp">
+    <button class="step-btn" data-act="dec" data-ei="${ei}" data-si="${si}" data-field="${field}">−</button>
+    <input class="step-val tnum" type="number" inputmode="decimal" value="${value}"
+      data-act="setfield" data-ei="${ei}" data-si="${si}" data-field="${field}" aria-label="${field}">
     <button class="step-btn" data-act="inc" data-ei="${ei}" data-si="${si}" data-field="${field}">+</button>
   </div>`;
 }
