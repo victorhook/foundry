@@ -2555,13 +2555,13 @@ function viewFoodEdit() {
   const numAttr = 'type="number" inputmode="decimal"';
   const imgRow = f.image
     ? `<div class="ex-img-edit"><img class="ex-img-preview" src="/api/file/${f.image}" alt="food"><button class="chip" data-act="food-img-remove">Remove</button></div>`
-    : `<button class="add-ex-btn" data-act="food-img-pick" ${state.foodImageBusy ? "disabled style=opacity:0.5" : ""}>${state.foodImageBusy ? "Uploading…" : "＋ Add image"}</button>`;
+    : `<button class="add-ex-btn${state.foodImageBusy ? " is-busy" : ""}" data-act="food-img-pick" ${state.foodImageBusy ? "disabled" : ""}>${state.foodImageBusy ? '<span class="spin"></span>Uploading…' : "＋ Add image"}</button>`;
   return `<div class="app">
     ${header({ back: true, backLabel: "Back" })}
     <main>
       <div class="section-head"><span class="eyebrow">${editing ? "Edit food" : "New food"}</span></div>
       ${field("Name", "name", "e.g. Greek yogurt")}
-      <button class="add-ex-btn" data-act="scan-pick" style="margin-top:14px;" ${state.scanBusy ? "disabled style=opacity:0.6" : ""}>${state.scanBusy ? "Reading label…" : "📷 Scan label"}</button>
+      <button class="add-ex-btn scan-btn${state.scanBusy ? " is-busy" : ""}" data-act="scan-pick" style="margin-top:14px;" ${state.scanBusy ? "disabled" : ""}>${state.scanBusy ? '<span class="spin"></span>Reading label…' : "📷 Scan label"}</button>
       <input type="file" accept="image/*" capture="environment" id="scan-file" data-act="scan-file" style="display:none">
       <div class="eyebrow" style="margin:18px 2px 10px;">Per 100 g</div>
       <div class="macro-grid">
@@ -3464,16 +3464,17 @@ page.subscribe((p) => {
   window.scrollTo(0, 0);
 });
 
-// Finger-following drawer swipe. Start within EDGE px of the left edge (drawer
-// closed) or anywhere while it's open; the panel tracks the finger, then snaps
-// open/closed on release based on how far it was dragged.
-const DRAWER_EDGE = 48;
+// Finger-following drawer swipe. A horizontal drag anywhere on the screen opens
+// the drawer (or closes it while open) — no need to start from the edge. The
+// panel tracks the finger, then snaps open/closed on release once it's dragged
+// past a short threshold.
 let dw = null;
 document.addEventListener("touchstart", (e) => {
   if (e.touches.length !== 1 || !drawerEl) { dw = null; return; }
+  // Don't hijack a reorder drag or anything that opts out of the swipe.
+  if (e.target.closest && e.target.closest(".drag-handle, [data-noswipe]")) { dw = null; return; }
   const x = e.touches[0].clientX, y = e.touches[0].clientY;
   const open = drawerIsOpen();
-  if (!open && x > DRAWER_EDGE) { dw = null; return; }
   dw = { x0: x, y0: y, open, decided: false, horizontal: false, tx: open ? 0 : -1, panel: null, scrim: null, w: 0 };
 }, { passive: true });
 document.addEventListener("touchmove", (e) => {
@@ -3482,7 +3483,8 @@ document.addEventListener("touchmove", (e) => {
   const dx = x - dw.x0, dy = y - dw.y0;
   if (!dw.decided) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) { return; }
-    dw.horizontal = Math.abs(dx) > Math.abs(dy);
+    // Horizontal, and (when closed) rightward — otherwise let the page be.
+    dw.horizontal = Math.abs(dx) > Math.abs(dy) * 1.2 && (dw.open || dx > 0);
     dw.decided = true;
     if (!dw.horizontal) { dw = null; return; }  // vertical → let the page scroll
     dw.panel = drawerEl.querySelector(".drawer-panel");
@@ -3502,7 +3504,11 @@ document.addEventListener("touchend", () => {
   const d = dw; dw = null;
   if (!d.decided || !d.horizontal) { return; }
   drawerEl.classList.remove("dragging");
-  if (d.tx > -d.w / 2) { drawerEl.classList.add("open"); } else { drawerEl.classList.remove("open"); }
+  // Openness 0 (closed) .. 1 (fully open). Snap with a short throw: a 25% drag
+  // is enough to open when closed, or to close when open.
+  const openFrac = (d.w + d.tx) / d.w;
+  const willOpen = d.open ? openFrac > 0.75 : openFrac > 0.25;
+  if (willOpen) { drawerEl.classList.add("open"); } else { drawerEl.classList.remove("open"); }
   d.panel.style.transform = "";
   d.scrim.style.opacity = "";
 }, { passive: true });

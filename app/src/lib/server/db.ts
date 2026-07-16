@@ -235,7 +235,111 @@ const migrations: Array<(d: Database.Database) => void> = [
 		ALTER TABLE meal ADD COLUMN everyday INTEGER NOT NULL DEFAULT 0;
 		ALTER TABLE meal ADD COLUMN slot TEXT;
 		ALTER TABLE meal_item ADD COLUMN grams REAL;
-		ALTER TABLE food_log ADD COLUMN grams REAL`)
+		ALTER TABLE food_log ADD COLUMN grams REAL`),
+	// v17 -> v18: seed a library of common basic foods (Sweden-relevant) with
+	// macros per 100 g, so the food list isn't empty to start with. Only inserts a
+	// food if one with the same name doesn't already exist, so it never clobbers
+	// anything the user added. Values are approximate, from public food databases.
+	(d) => {
+		// [name, kcal, protein, carbs, fat] per 100 g. Raw/uncooked unless noted.
+		const foods = [
+			// Vegetables
+			['Potato', 77, 2, 17, 0.1],
+			['Sweet potato', 86, 1.6, 20, 0.1],
+			['Carrot', 41, 0.9, 10, 0.2],
+			['Broccoli', 34, 2.8, 7, 0.4],
+			['Cauliflower', 25, 1.9, 5, 0.3],
+			['Yellow onion', 40, 1.1, 9, 0.1],
+			['Tomato', 18, 0.9, 3.9, 0.2],
+			['Cucumber', 15, 0.7, 3.6, 0.1],
+			['Bell pepper (paprika)', 31, 1, 6, 0.3],
+			['Spinach', 23, 2.9, 3.6, 0.4],
+			['Lettuce', 15, 1.4, 2.9, 0.2],
+			['White cabbage (vitkål)', 25, 1.3, 6, 0.1],
+			['Kale (grönkål)', 49, 4.3, 9, 0.9],
+			['Green peas (ärtor)', 81, 5.4, 14, 0.4],
+			['Green beans', 31, 1.8, 7, 0.1],
+			['Beetroot (rödbeta)', 43, 1.6, 10, 0.2],
+			['Mushrooms (champinjoner)', 22, 3.1, 3.3, 0.3],
+			['Zucchini', 17, 1.2, 3.1, 0.3],
+			['Avocado', 160, 2, 9, 15],
+			['Sweetcorn', 86, 3.2, 19, 1.2],
+			// Fruit & berries
+			['Apple', 52, 0.3, 14, 0.2],
+			['Banana', 89, 1.1, 23, 0.3],
+			['Orange', 47, 0.9, 12, 0.1],
+			['Pear', 57, 0.4, 15, 0.1],
+			['Grapes', 69, 0.7, 18, 0.2],
+			['Kiwi', 61, 1.1, 15, 0.5],
+			['Strawberries (jordgubbar)', 32, 0.7, 8, 0.3],
+			['Blueberries (blåbär)', 57, 0.7, 14, 0.3],
+			['Lingonberries (lingon)', 54, 0.5, 12, 0.5],
+			['Raspberries (hallon)', 52, 1.2, 12, 0.7],
+			// Dairy & eggs
+			['Egg', 143, 13, 1.1, 9.5],
+			['Milk 3% (mellanmjölk)', 60, 3.4, 4.8, 3],
+			['Milk 1.5%', 45, 3.4, 4.8, 1.5],
+			['Milk 0.5% (lättmjölk)', 35, 3.4, 5, 0.5],
+			['Natural yoghurt (3%)', 60, 3.3, 4.7, 3],
+			['Greek yoghurt (10%)', 133, 5.7, 4, 10],
+			['Filmjölk 3%', 56, 3.3, 4.3, 3],
+			['Kvarg (quark), natural', 61, 11, 4, 0.2],
+			['Cottage cheese (keso)', 98, 11, 3.4, 4.3],
+			['Hard cheese (hushållsost)', 350, 26, 0.5, 27],
+			['Butter (smör)', 717, 0.9, 0.1, 81],
+			['Whipping cream 40% (grädde)', 340, 2.1, 3, 36],
+			['Crème fraiche', 290, 2.4, 3.4, 30],
+			// Meat, fish & protein
+			['Chicken breast', 120, 23, 0, 2.6],
+			['Chicken thigh', 177, 24, 0, 8],
+			['Ground beef 10% (nötfärs)', 176, 20, 0, 10],
+			['Beef steak', 217, 26, 0, 12],
+			['Pork chop', 231, 26, 0, 14],
+			['Bacon', 540, 37, 1.4, 42],
+			['Cooked ham (skinka)', 110, 18, 1.5, 3.5],
+			['Falukorv', 250, 11, 8, 20],
+			['Salmon (lax)', 208, 20, 0, 13],
+			['Cod (torsk)', 82, 18, 0, 0.7],
+			['Herring (sill)', 158, 18, 0, 9],
+			['Shrimp (räkor)', 99, 24, 0.2, 0.3],
+			['Tuna, canned in water', 116, 26, 0, 1],
+			['Tofu', 76, 8, 1.9, 4.8],
+			// Grains, bread & staples
+			['White rice, cooked', 130, 2.7, 28, 0.3],
+			['Pasta, cooked', 158, 6, 31, 0.9],
+			['Oats (havregryn)', 389, 17, 66, 7],
+			['Wholegrain bread (fullkornsbröd)', 250, 9, 43, 3.5],
+			['Rye bread (rågbröd)', 259, 8.5, 48, 3.3],
+			['Crispbread (knäckebröd)', 334, 9, 66, 2],
+			['Muesli', 360, 9, 66, 6],
+			['Couscous, cooked', 112, 3.8, 23, 0.2],
+			['Quinoa, cooked', 120, 4.4, 21, 1.9],
+			// Legumes & nuts
+			['Lentils, cooked', 116, 9, 20, 0.4],
+			['Chickpeas, cooked', 164, 8.9, 27, 2.6],
+			['Kidney beans, cooked', 127, 8.7, 23, 0.5],
+			['Almonds', 579, 21, 22, 50],
+			['Peanuts', 567, 26, 16, 49],
+			['Peanut butter', 588, 25, 20, 50],
+			// Fats, sweeteners & other
+			['Olive oil', 884, 0, 0, 100],
+			['Rapeseed oil (rapsolja)', 884, 0, 0, 100],
+			['Sugar', 387, 0, 100, 0],
+			['Honey', 304, 0.3, 82, 0],
+			['Hummus', 166, 8, 14, 10]
+		];
+		const exists = d.prepare('SELECT 1 FROM food WHERE name = ? LIMIT 1');
+		const ins = d.prepare(
+			'INSERT INTO food (id, name, image, kcal, protein, carbs, fat, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?)'
+		);
+		const now = Date.now();
+		let i = 0;
+		for (const row of foods) {
+			const [name, kcal, protein, carbs, fat] = row;
+			if (exists.get(name)) continue;
+			ins.run('seed-' + i++, name, kcal, protein, carbs, fat, now);
+		}
+	}
 ];
 
 function migrate() {

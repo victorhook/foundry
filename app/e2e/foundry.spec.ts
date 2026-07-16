@@ -348,15 +348,16 @@ test('nutrition: targets, quick-add, custom food, edit qty, and persistence', as
 	await expect(page.getByText('Oatmeal')).toBeVisible();
 	await expect(page.locator('.kcal-num')).toHaveText('300');
 
-	// Create a custom food and log it to Lunch.
+	// Create a custom food and log it to Lunch. Use a unique name so it doesn't
+	// collide with the seeded food library.
 	await page.locator('[data-act="add-food"][data-slot="lunch"]').click();
 	await page.getByRole('button', { name: /New food/ }).click();
-	await page.locator('[data-act="food-field"][data-field="name"]').fill('Chicken breast');
+	await page.locator('[data-act="food-field"][data-field="name"]').fill('ZZ Test Chicken');
 	await page.locator('[data-act="food-field"][data-field="kcal"]').fill('200');
 	await page.getByRole('button', { name: /Add food/ }).click();
-	await page.locator('[data-act="log-food"]').first().click();
+	await page.locator('[data-act="log-food"]', { hasText: 'ZZ Test Chicken' }).click();
 	await page.locator('.back-btn').click();
-	await expect(page.getByText('Chicken breast')).toBeVisible();
+	await expect(page.getByText('ZZ Test Chicken')).toBeVisible();
 	await expect(page.locator('.kcal-num')).toHaveText('500');
 
 	// Edit the oatmeal quick-add entry's total kcal 300 -> 600 (600 + 200 = 800).
@@ -366,7 +367,7 @@ test('nutrition: targets, quick-add, custom food, edit qty, and persistence', as
 	await expect(page.locator('.kcal-num')).toHaveText('800');
 
 	// Edit the chicken FOOD entry by grams: 100g -> 150g (200 kcal/100g -> 300).
-	await page.getByText('Chicken breast').click();
+	await page.getByText('ZZ Test Chicken').click();
 	await page.locator('[data-act="entry-grams"]').fill('150');
 	await page.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(page.locator('.kcal-num')).toHaveText('900');
@@ -374,7 +375,7 @@ test('nutrition: targets, quick-add, custom food, edit qty, and persistence', as
 	// Reload: the day's entries come from SQLite.
 	await page.reload();
 	await expect(page.getByText('Oatmeal')).toBeVisible();
-	await expect(page.getByText('Chicken breast')).toBeVisible();
+	await expect(page.getByText('ZZ Test Chicken')).toBeVisible();
 	await expect(page.locator('.kcal-num')).toHaveText('900');
 });
 
@@ -385,7 +386,7 @@ test('nutrition: build a saved meal and log it in one tap', async ({ page }) => 
 	// Need a food in the library first.
 	await page.locator('[data-act="add-food"][data-slot="breakfast"]').click();
 	await page.getByRole('button', { name: /New food/ }).click();
-	await page.locator('[data-act="food-field"][data-field="name"]').fill('Egg');
+	await page.locator('[data-act="food-field"][data-field="name"]').fill('ZZ Test Egg');
 	await page.locator('[data-act="food-field"][data-field="kcal"]').fill('70');
 	await page.getByRole('button', { name: /Add food/ }).click();
 
@@ -394,16 +395,16 @@ test('nutrition: build a saved meal and log it in one tap', async ({ page }) => 
 	await page.getByRole('button', { name: /New meal/ }).click();
 	await page.locator('[data-act="meal-name"]').fill('Two eggs');
 	await page.getByRole('button', { name: /Add food/ }).click();
-	// The shared e2e DB may hold other foods; pick Egg specifically, twice.
-	const eggPick = page.locator('.meal-chooser [data-act="meal-add-food"]', { hasText: 'Egg' });
+	// The shared e2e DB holds the seeded library; pick our unique food, twice.
+	const eggPick = page.locator('.meal-chooser [data-act="meal-add-food"]', { hasText: 'ZZ Test Egg' });
 	await eggPick.click();
 	await eggPick.click();
 	await page.getByRole('button', { name: /Create meal/ }).click();
 
 	// Log the meal in one tap; both items land in the day (2 × 70 = 140).
-	await page.locator('[data-act="log-meal"]').first().click();
+	await page.locator('[data-act="log-meal"]', { hasText: 'Two eggs' }).first().click();
 	await page.locator('.back-btn').click();
-	await expect(page.getByText('Egg').first()).toBeVisible();
+	await expect(page.getByText('ZZ Test Egg').first()).toBeVisible();
 	await expect(page.locator('.kcal-num')).toHaveText('140');
 });
 
@@ -414,7 +415,7 @@ test('nutrition per-100g: meal by grams + everyday one-tap add', async ({ page }
 	// A food with 130 kcal per 100 g.
 	await page.locator('[data-act="add-food"][data-slot="lunch"]').click();
 	await page.getByRole('button', { name: /New food/ }).click();
-	await page.locator('[data-act="food-field"][data-field="name"]').fill('Rice');
+	await page.locator('[data-act="food-field"][data-field="name"]').fill('ZZ Test Rice');
 	await page.locator('[data-act="food-field"][data-field="kcal"]').fill('130');
 	await page.getByRole('button', { name: /Add food/ }).click();
 
@@ -423,7 +424,7 @@ test('nutrition per-100g: meal by grams + everyday one-tap add', async ({ page }
 	await page.getByRole('button', { name: /New meal/ }).click();
 	await page.locator('[data-act="meal-name"]').fill('Rice bowl');
 	await page.getByRole('button', { name: /Add food/ }).click();
-	await page.locator('.meal-chooser [data-act="meal-add-food"]', { hasText: 'Rice' }).click();
+	await page.locator('.meal-chooser [data-act="meal-add-food"]', { hasText: 'ZZ Test Rice' }).click();
 	await page.locator('[data-act="meal-grams"]').fill('200');
 	await page.getByRole('button', { name: /Every day/ }).click();
 	await page.getByRole('button', { name: 'Lunch' }).click();
@@ -433,7 +434,7 @@ test('nutrition per-100g: meal by grams + everyday one-tap add', async ({ page }
 	await page.locator('.back-btn').click();
 	await page.getByRole('button', { name: /Add daily meals/ }).click();
 	await expect(page.locator('.kcal-num')).toHaveText('260');
-	await expect(page.getByText('Rice')).toBeVisible();
+	await expect(page.getByText('ZZ Test Rice')).toBeVisible();
 });
 
 const TINY_JPEG = Buffer.from(
