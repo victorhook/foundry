@@ -489,3 +489,26 @@ test('upload a program with a PDF and view it', async ({ page }) => {
 	await expect(page.locator('.pdf-doc')).toBeVisible();
 	await expect(page.getByText('3x per week')).toBeVisible();
 });
+
+test('finish-screen notes field does not navigate away; workout resumes from home', async ({ page }) => {
+	await login(page);
+	await startRoutine(page, 'Gym');
+	await expect(page.getByRole('button', { name: /Finish workout/ })).toBeVisible();
+
+	// Go to the finish screen and tap the workout-notes field. This used to fire
+	// the global "Notes" action and yank you off the workout — regression guard.
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+	await page.locator('#notes').click();
+	await page.locator('#notes').fill('felt strong');
+	// Still on the finish screen (not the daily Notes list).
+	await expect(page.getByRole('button', { name: /Save workout/ })).toBeVisible();
+
+	// Back to the active session (has the hamburger), then leave to Home. The
+	// in-progress workout is a draft, so Home offers a Resume card.
+	await page.locator('.back-btn').first().click();
+	await expect(page.getByRole('button', { name: /Finish workout/ })).toBeVisible();
+	await menuNav(page, 'Home');
+	await expect(page.locator('.resume-card')).toBeVisible();
+	await page.locator('[data-act="resume-workout"]').click();
+	await expect(page.getByRole('button', { name: /Finish workout/ })).toBeVisible();
+});

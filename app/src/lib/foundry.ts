@@ -283,6 +283,22 @@ function cloneEntryForRepeat(entry) {
   return { exerciseId: entry.exerciseId, sets: (entry.sets || []).map((s) => ({ ...s })) };
 }
 
+// Guard against silently discarding an in-progress workout: if one exists (with
+// exercises), confirm before starting a fresh one; otherwise just proceed.
+function beginNew(fn) {
+  if (state.active && state.active.entries && state.active.entries.length) {
+    state.confirm = {
+      title: "Start a new workout?",
+      body: "You have a workout in progress. Starting a new one discards it.",
+      ok: "Discard & start", danger: true,
+      onOk: fn,
+    };
+    render();
+  } else {
+    fn();
+  }
+}
+
 // ts (optional) = a chosen day for a backdated session. A workout on a past day
 // is "manual" (no live timer, no duration); today always runs live.
 function startWorkout(routine, ts) {
@@ -999,9 +1015,27 @@ function viewHome() {
 
   const today = new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 
+  // A workout in progress is kept as a local draft (survives refresh); surface a
+  // one-tap way back to it from Home.
+  const resume = state.active
+    ? (() => {
+        const n = state.active.entries.length;
+        const name = state.active.routineName || "Workout";
+        return `<button class="resume-card" data-act="resume-workout">
+          <span class="resume-ico">🏋️</span>
+          <span class="resume-body">
+            <span class="resume-title">Resume workout</span>
+            <span class="resume-sub">${escAttr(name)} · ${n} exercise${n === 1 ? "" : "s"}</span>
+          </span>
+          <span class="resume-go">›</span>
+        </button>`;
+      })()
+    : "";
+
   return `<div class="app">
     ${header({ title: today })}
     <main>
+      ${resume}
       ${calendarWidget()}
 
       <div class="section-head">
@@ -1605,7 +1639,7 @@ function viewFinish() {
 
       <div class="finish-block">
         <span class="eyebrow">Notes</span>
-        <textarea class="notes" id="notes" data-act="notes">${w.notes}</textarea>
+        <textarea class="notes" id="notes" data-act="wnote">${w.notes}</textarea>
       </div>
 
       ${w.entries.some((en) => exById(en.exerciseId).type !== "cardio")
@@ -2945,11 +2979,16 @@ function toggleDictation() {
   dictateBase = state.noteEdit && state.noteEdit.text ? state.noteEdit.text.trim() + " " : "";
   dictateFinal = "";
   recog.onresult = (e) => {
-    let interim = "";
-    for (let i = e.resultIndex; i < e.results.length; i++) {
+    // Rebuild the whole transcript from the results list every event rather than
+    // appending incrementally. Some engines (Android Chrome) re-fire earlier
+    // results or keep resultIndex at 0, which made incremental appends duplicate
+    // words ("the the quick quick"). Rebuilding is idempotent.
+    let final = "", interim = "";
+    for (let i = 0; i < e.results.length; i++) {
       const r = e.results[i];
-      if (r.isFinal) { dictateFinal += r[0].transcript + " "; } else { interim += r[0].transcript; }
+      if (r.isFinal) { final += r[0].transcript + " "; } else { interim += r[0].transcript + " "; }
     }
+    dictateFinal = final;
     if (state.noteEdit) { state.noteEdit.text = (dictateBase + dictateFinal).replace(/\s+/g, " ").trimStart(); }
     const ta = document.querySelector('[data-act="note-text"]');
     if (ta) { ta.value = (dictateBase + dictateFinal + interim).replace(/\s+/g, " ").trimStart(); }
@@ -3060,9 +3099,10 @@ app.addEventListener("click", (e) => {
     case "del-photo": deletePhotoById(t.dataset.id); break;
     case "noop": break;
     case "add-workout": state.newDate = null; go("choose"); break;
-    case "start-empty": startWorkout(null, t.dataset.date ? parseInt(t.dataset.date, 10) : undefined); break;
-    case "start-routine": startWorkout(state.routines.find((r) => r.id === t.dataset.id), t.dataset.date ? parseInt(t.dataset.date, 10) : undefined); break;
-    case "start-template": startFromTemplate(state.templates.find((x) => x.id === t.dataset.id), t.dataset.date ? parseInt(t.dataset.date, 10) : undefined); break;
+    case "resume-workout": if (state.active) { go("active"); } break;
+    case "start-empty": { const d = t.dataset.date ? parseInt(t.dataset.date, 10) : undefined; beginNew(() => startWorkout(null, d)); break; }
+    case "start-routine": { const r = state.routines.find((x) => x.id === t.dataset.id), d = t.dataset.date ? parseInt(t.dataset.date, 10) : undefined; beginNew(() => startWorkout(r, d)); break; }
+    case "start-template": { const x = state.templates.find((y) => y.id === t.dataset.id), d = t.dataset.date ? parseInt(t.dataset.date, 10) : undefined; beginNew(() => startFromTemplate(x, d)); break; }
     case "templates": go("templates"); break;
     case "new-template": newTemplate(); break;
     case "edit-template": editTemplate(t.dataset.id); break;
@@ -3255,7 +3295,7 @@ app.addEventListener("input", (e) => {
   if (!t) { return; }
   const act = t.dataset.act;
   if (act === "search") { state.picker.q = t.value; /* re-render list only, keep focus */ updatePickerList(); }
-  else if (act === "notes") { state.active.notes = t.value; save(); }
+  else if (act === "wnote") { state.active.notes = t.value; save(); }
   else if (act === "ex-note") { setExNote(parseInt(t.dataset.ei, 10), t.value); }
   else if (act === "new-name") { state.picker.newName = t.value; }
   else if (act === "new-tag-text") { state.picker.newTagText = t.value; }

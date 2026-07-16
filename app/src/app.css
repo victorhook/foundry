@@ -126,6 +126,21 @@
   .routine .r-meta { font-size: 0.78rem; color: var(--muted); }
   .routine .r-icon { font-size: 1.3rem; }
 
+  /* Resume-in-progress-workout banner on Home */
+  .resume-card {
+    width: 100%; display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px; margin-bottom: 14px; border-radius: var(--radius);
+    background: var(--surface); border: 1px solid var(--accent);
+    box-shadow: 0 0 0 3px rgba(251, 113, 65, 0.12);
+    transition: transform 0.08s ease;
+  }
+  .resume-card:active { transform: scale(0.99); }
+  .resume-card .resume-ico { font-size: 1.4rem; flex: 0 0 auto; }
+  .resume-card .resume-body { display: flex; flex-direction: column; text-align: left; min-width: 0; flex: 1; }
+  .resume-card .resume-title { font-weight: 800; color: var(--accent); font-size: 0.98rem; }
+  .resume-card .resume-sub { font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .resume-card .resume-go { color: var(--accent); font-size: 1.5rem; font-weight: 300; flex: 0 0 auto; }
+
   .empty {
     text-align: center; color: var(--muted);
     padding: 40px 20px; font-size: 0.92rem;
