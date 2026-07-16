@@ -2770,10 +2770,10 @@ let pdfjsLib = null;
 async function getPdfjs() {
   if (!pdfjsLib) {
     pdfjsLib = await import("pdfjs-dist");
-    // Bundle the worker (Vite ?worker) and hand it over as a port. More robust
-    // across PWA/service-worker environments than pointing workerSrc at a URL.
-    const PdfWorker = (await import("pdfjs-dist/build/pdf.worker.min.mjs?worker")).default;
-    pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker();
+    // Serve pdf.js's worker file verbatim from /static (see static/pdf.worker.min.mjs).
+    // Letting Vite re-bundle the already-minified worker (?worker/?url) mangled it
+    // on some Android builds ("getOnInsertComputed is not a function").
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
   }
   return pdfjsLib;
 }
