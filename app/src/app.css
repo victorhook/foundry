@@ -121,10 +121,22 @@
     min-height: 92px;
     transition: transform 0.08s ease, border-color 0.12s ease;
   }
-  .routine:active { transform: scale(0.98); border-color: var(--accent); }
+  .routine:active { transform: scale(0.98); border-color: var(--tc, var(--accent)); }
   .routine .r-name { font-weight: 700; font-size: 1.02rem; }
   .routine .r-meta { font-size: 0.78rem; color: var(--muted); }
-  .routine .r-icon { font-size: 1.3rem; }
+  /* Per-type tinted icon chip (--tc set inline per routine) */
+  .routine .r-icon {
+    font-size: 1.3rem; width: 46px; height: 46px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: color-mix(in srgb, var(--tc, var(--accent)) 20%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tc, var(--accent)) 45%, transparent);
+  }
+
+  /* Small colored dot marking a workout's type next to its title */
+  .type-dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    margin-right: 7px; vertical-align: middle; flex-shrink: 0;
+  }
 
   /* Resume-in-progress-workout banner on Home */
   .resume-card {

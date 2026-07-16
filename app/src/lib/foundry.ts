@@ -44,6 +44,18 @@ const SEED_ROUTINES = [
   { id: "bikeint", name: "Bike Interval", icon: "⚡",          exerciseIds: ["bike_int"] },
 ];
 
+// Per-type accent colors. Deliberately kept in the blue→violet→pink range so they
+// never read like the pain/feel heat scale (teal → amber → red). Templates and
+// custom/empty workouts fall back to the app accent.
+const TYPE_COLORS = {
+  gym:     "#5B8CFF",  // blue
+  bike:    "#18B6E6",  // cyan
+  bikeint: "#6C6CF5",  // indigo
+  run:     "#FF5CA8",  // pink
+  walk:    "#A46CFF",  // violet
+};
+const DEFAULT_TYPE_COLOR = "var(--accent)";
+
 /* ============ State ============ */
 // Server-backed collections start empty and are filled by boot() from /api/data.
 // UI/draft state (active session, current view) is restored from localStorage.
@@ -225,6 +237,15 @@ function heatColor(rpe) {
   const c = a.map((v, i) => Math.round(v + (b[i] - v) * localT));
   return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 }
+
+// Resolve a workout (or active session) to its type accent color, matching its
+// routineName back to a seed routine. Unknown names (templates, empty) → accent.
+function typeColorFor(routineName) {
+  if (!routineName) { return DEFAULT_TYPE_COLOR; }
+  const r = state.routines.find((x) => x.name.toLowerCase() === String(routineName).toLowerCase());
+  return (r && TYPE_COLORS[r.id]) || DEFAULT_TYPE_COLOR;
+}
+function typeColor(w) { return typeColorFor(w && w.routineName); }
 
 function lastSetFor(exerciseId) {
   for (let i = state.workouts.length - 1; i >= 0; i--) {
@@ -1069,7 +1090,7 @@ function viewChoose() {
        <div class="empty" style="padding:22px;">No templates yet — build one for one-tap gym days.</div>`;
 
   const basicsHtml = state.routines.map((r) =>
-    `<button class="routine" data-act="start-routine" data-id="${r.id}"${dateAttr}>
+    `<button class="routine" data-act="start-routine" data-id="${r.id}"${dateAttr} style="--tc:${TYPE_COLORS[r.id] || DEFAULT_TYPE_COLOR}">
       <span class="r-icon">${r.icon}</span>
       <span class="r-name">${r.name}</span>
     </button>`
@@ -1195,10 +1216,11 @@ function historyCard(w) {
   const exStr = exCount ? ` · ${exCount} exercise${exCount !== 1 ? "s" : ""}` : "";
   const title = w.theme || w.routineName || "Workout";
   const sub = w.theme && w.routineName ? `${w.routineName} · ` : "";
-  return `<button class="hcard" data-act="detail" data-id="${w.id}">
+  const tc = typeColor(w);
+  return `<button class="hcard" data-act="detail" data-id="${w.id}" style="border-left:3px solid ${tc}">
     <div class="feel-badge tnum" style="${badgeStyle}">${feel || "–"}</div>
     <div class="h-body">
-      <div class="h-title">${escAttr(title)}</div>
+      <div class="h-title"><span class="type-dot" style="background:${tc}"></span>${escAttr(title)}</div>
       <div class="h-meta">${sub}${fmtDate(w.startedAt)}${exStr}</div>
     </div>
     ${painCount ? `<span class="pain-flag">⚠ ${painCount}</span>` : ""}
@@ -1243,9 +1265,8 @@ function calendarWidget() {
       }
       const ws = byDay[year + "-" + month + "-" + day];
       if (ws && ws.length) {
-        const maxFeel = Math.max(...ws.map((w) => w.feel || 0));
-        const color = maxFeel ? heatColor(maxFeel) : "var(--accent)";
         const last = ws[ws.length - 1];
+        const color = typeColor(last);  // color the day by workout type (not pain)
         cells += `<button class="cal-day has" style="background:${color}" data-act="cal-day" data-id="${last.id}">${day}${ws.length > 1 ? `<span class="cal-multi">${ws.length}</span>` : ""}</button>`;
       } else {
         const todayCls = (thisMonth && today.getDate() === day) ? " today" : "";
@@ -1330,7 +1351,7 @@ function viewActive() {
     ${header({ dateLabel: fmtDate(w.startedAt) })}
     <main>
       <div class="section-head">
-        <span class="eyebrow">${w.routineName || "Workout"}</span>
+        <span class="eyebrow"><span class="type-dot" style="background:${typeColor(w)}"></span>${w.routineName || "Workout"}</span>
         <button class="discard-btn" data-act="cancel">Discard</button>
       </div>
       ${workoutOverview(w)}
@@ -1773,7 +1794,7 @@ function viewDetail() {
   return `<div class="app">
     ${header({ back: true, backLabel: "History" })}
     <main>
-      <div class="section-head"><span class="eyebrow">${w.routineName || "Workout"}${w.theme ? " · " + escAttr(w.theme) : ""} · ${fmtDate(w.startedAt)}</span></div>
+      <div class="section-head"><span class="eyebrow"><span class="type-dot" style="background:${typeColor(w)}"></span>${w.routineName || "Workout"}${w.theme ? " · " + escAttr(w.theme) : ""} · ${fmtDate(w.startedAt)}</span></div>
       <div class="finish-block">
         <span class="eyebrow">Date</span>
         <input class="date-input" type="date" value="${dateInputValue(w.startedAt)}" data-act="detail-date" data-id="${w.id}">
