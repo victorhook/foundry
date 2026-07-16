@@ -43,27 +43,42 @@ function parseJsonLoose(s: string) {
 	}
 }
 
-async function scanWithClaude(buf: Buffer, mediaType: string) {
-	const client = await getAnthropic();
-	// Fast mode + no thinking: this is a tiny extraction, so we optimise for latency.
-	const res = await client.beta.messages.create({
+async function callClaude(client: any, buf: Buffer, mediaType: string, fast: boolean) {
+	// No thinking (this is a tiny extraction) and, when available, fast mode —
+	// both to keep latency down.
+	const content = [
+		{
+			type: 'image',
+			source: { type: 'base64', media_type: mediaType, data: buf.toString('base64') }
+		},
+		{ type: 'text', text: PROMPT }
+	];
+	if (fast) {
+		return client.beta.messages.create({
+			model: 'claude-opus-4-8',
+			max_tokens: 400,
+			speed: 'fast',
+			betas: ['fast-mode-2026-02-01'],
+			messages: [{ role: 'user', content }]
+		});
+	}
+	return client.messages.create({
 		model: 'claude-opus-4-8',
 		max_tokens: 400,
-		speed: 'fast',
-		betas: ['fast-mode-2026-02-01'],
-		messages: [
-			{
-				role: 'user',
-				content: [
-					{
-						type: 'image',
-						source: { type: 'base64', media_type: mediaType, data: buf.toString('base64') }
-					},
-					{ type: 'text', text: PROMPT }
-				]
-			}
-		]
+		messages: [{ role: 'user', content }]
 	});
+}
+
+async function scanWithClaude(buf: Buffer, mediaType: string) {
+	const client = await getAnthropic();
+	// Fast mode is a research preview and may not be enabled on every key — if it
+	// errors, retry the same request without it before giving up on Claude.
+	let res;
+	try {
+		res = await callClaude(client, buf, mediaType, true);
+	} catch {
+		res = await callClaude(client, buf, mediaType, false);
+	}
 	const text = (res.content || [])
 		.filter((b: any) => b.type === 'text')
 		.map((b: any) => b.text)
