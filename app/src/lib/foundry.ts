@@ -618,6 +618,18 @@ async function changeWorkoutTheme(id, theme) {
   try { await apiPut("/api/workouts", { id, theme: next }); toast("Theme updated ✓"); }
   catch (e) { toast("Couldn't update theme"); }
 }
+// Editing a saved workout's notes from the detail screen. Debounced so we don't
+// hit the server on every keystroke; no re-render on input (keeps the caret).
+let detailNotesTimer = null;
+function changeWorkoutNotes(id, notes) {
+  const w = state.workouts.find((x) => x.id === id);
+  if (!w) { return; }
+  w.notes = notes;                     // optimistic; textarea already holds the text
+  clearTimeout(detailNotesTimer);
+  detailNotesTimer = setTimeout(() => {
+    apiPut("/api/workouts", { id, notes }).catch(() => toast("Couldn't save note"));
+  }, 600);
+}
 function openDetailThemeNew() { state.detailThemeNewOpen = true; render(); }
 function addDetailThemeNew(id) {
   const th = addWorkoutTheme(state.detailThemeNewText);
@@ -1819,7 +1831,10 @@ function viewDetail() {
       </div>
       ${exHtml}
       ${painHtml}
-      ${w.notes ? `<div class="finish-block"><span class="eyebrow" style="display:block;margin-bottom:8px;">Notes</span><div style="color:var(--muted);line-height:1.6;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;">${w.notes.replace(/</g, "&lt;")}</div></div>` : ""}
+      <div class="finish-block">
+        <span class="eyebrow" style="display:block;margin-bottom:8px;">Notes</span>
+        <textarea class="notes" data-act="detail-note" data-id="${w.id}" placeholder="Add notes for this workout…">${escAttr(w.notes || "")}</textarea>
+      </div>
     </main>
     <div class="footer">
       <button class="btn btn-primary" data-act="repeat" data-id="${w.id}">↻  Repeat this workout</button>
@@ -3382,6 +3397,7 @@ app.addEventListener("input", (e) => {
   const act = t.dataset.act;
   if (act === "search") { state.picker.q = t.value; /* re-render list only, keep focus */ updatePickerList(); }
   else if (act === "wnote") { state.active.notes = t.value; save(); }
+  else if (act === "detail-note") { changeWorkoutNotes(t.dataset.id, t.value); }
   else if (act === "ex-note") { setExNote(parseInt(t.dataset.ei, 10), t.value); }
   else if (act === "new-name") { state.picker.newName = t.value; }
   else if (act === "new-tag-text") { state.picker.newTagText = t.value; }

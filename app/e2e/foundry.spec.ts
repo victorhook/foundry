@@ -512,3 +512,23 @@ test('finish-screen notes field does not navigate away; workout resumes from hom
 	await page.locator('[data-act="resume-workout"]').click();
 	await expect(page.getByRole('button', { name: /Finish workout/ })).toBeVisible();
 });
+
+test('attach a note to a saved workout and it persists', async ({ page }) => {
+	await login(page);
+
+	// Save a quick Gym session, then open it from Recent.
+	await startRoutine(page, 'Gym');
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+	await page.getByRole('button', { name: /Save workout/ }).click();
+	await page.locator('.hcard').first().click();
+
+	// Add a note on the detail screen; it saves via the workouts PUT (debounced).
+	const note = page.locator('[data-act="detail-note"]');
+	await expect(note).toBeVisible();
+	await note.fill('Right shoulder felt tight on presses');
+	// Give the debounced save time to fire, then reload — the detail view is
+	// restored and the note comes back from SQLite.
+	await page.waitForTimeout(900);
+	await page.reload();
+	await expect(page.locator('[data-act="detail-note"]')).toHaveValue('Right shoulder felt tight on presses');
+});

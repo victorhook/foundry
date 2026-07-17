@@ -20,7 +20,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	return json(createWorkout(workout));
 };
 
-// Edit an existing workout's date and/or theme. Body: { id, startedAt?, theme? }
+// Edit an existing workout's date, theme, and/or notes. Body: { id, startedAt?, theme?, notes? }
 export const PUT: RequestHandler = async ({ locals, request }) => {
 	if (!locals.userId) {
 		throw error(401, 'Not authenticated');
@@ -30,9 +30,10 @@ export const PUT: RequestHandler = async ({ locals, request }) => {
 	if (!id) {
 		throw error(400, 'id required');
 	}
-	const patch: { startedAt?: number; theme?: string | null } = {};
+	const patch: { startedAt?: number; theme?: string | null; notes?: string } = {};
 	if (b.startedAt != null) { patch.startedAt = Number(b.startedAt); }
 	if (b.theme !== undefined) { patch.theme = b.theme; }
+	if (b.notes !== undefined) { patch.notes = String(b.notes); }
 	const updated = updateWorkout(id, patch);
 	if (!updated) {
 		throw error(404, 'Not found');

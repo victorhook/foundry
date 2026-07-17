@@ -517,12 +517,13 @@ export function getWorkouts() {
 }
 
 // Edit an existing workout's date and/or theme.
-export function updateWorkout(id: string, patch: { startedAt?: number; theme?: string | null }) {
-	const cur = db.prepare('SELECT started_at, theme FROM workout WHERE id = ?').get(id) as any;
+export function updateWorkout(id: string, patch: { startedAt?: number; theme?: string | null; notes?: string }) {
+	const cur = db.prepare('SELECT started_at, theme, notes FROM workout WHERE id = ?').get(id) as any;
 	if (!cur) { return null; }
 	const startedAt = patch.startedAt != null ? patch.startedAt : cur.started_at;
 	const theme = patch.theme !== undefined ? ((patch.theme || '').trim() || null) : cur.theme;
-	db.prepare('UPDATE workout SET started_at = ?, theme = ? WHERE id = ?').run(startedAt, theme, id);
+	const notes = patch.notes !== undefined ? String(patch.notes) : cur.notes;
+	db.prepare('UPDATE workout SET started_at = ?, theme = ?, notes = ? WHERE id = ?').run(startedAt, theme, notes, id);
 	if (theme) { rememberTheme(theme); }
 	return getWorkouts().find((w) => w.id === id) || null;
 }
