@@ -21,7 +21,9 @@ async function startRoutine(page: Page, name: string) {
 // History / Photos / Templates / Profile / Sign out now live in the hamburger menu.
 async function menuNav(page: Page, name: string) {
 	await page.getByRole('button', { name: 'Menu' }).click();
-	await page.getByRole('button', { name }).click();
+	// Scope to the drawer so in-page links with similar names (e.g. the home
+	// "Goals ›" link) don't collide with the drawer item.
+	await page.locator('.drawer-panel').getByRole('button', { name }).click();
 }
 
 test('unauthenticated visits are redirected to login', async ({ page }) => {
@@ -531,4 +533,45 @@ test('attach a note to a saved workout and it persists', async ({ page }) => {
 	await page.waitForTimeout(900);
 	await page.reload();
 	await expect(page.locator('[data-act="detail-note"]')).toHaveValue('Right shoulder felt tight on presses');
+});
+
+test('weekly goal tracks progress on home; generic goal toggles done', async ({ page }) => {
+	await login(page);
+
+	// Create a weekly goal filtered to Bike Interval — a type no other test logs,
+	// so the count on the shared e2e DB is deterministic (starts at 0).
+	await menuNav(page, 'Goals');
+	await page.getByRole('button', { name: /New goal/ }).click();
+	await page.locator('[data-act="goal-title"]').fill('Intervals 3× this week');
+	await page.locator('[data-act="goal-target"]').fill('3');
+	await page.locator('[data-act="goal-filter"][data-filter="bikeint"]').click();
+	await page.getByRole('button', { name: /Add goal/ }).click();
+	await expect(page.locator('.goal-count')).toHaveText('0/3');
+
+	// Back home: the "This week" bar is shown, still 0/3.
+	await page.locator('.back-btn').click();
+	await expect(page.locator('.goal-card', { hasText: 'Intervals 3×' })).toBeVisible();
+	await expect(page.locator('.goal-count')).toHaveText('0/3');
+
+	// Log a Bike Interval workout → progress ticks to 1/3.
+	await startRoutine(page, 'Bike Interval');
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+	await page.getByRole('button', { name: /Save workout/ }).click();
+	await expect(page.locator('.goal-count')).toHaveText('1/3');
+
+	// Progress persists across reload (goal from SQLite, count recomputed).
+	await page.reload();
+	await expect(page.locator('.goal-count')).toHaveText('1/3');
+
+	// Add a generic goal and check it off.
+	await menuNav(page, 'Goals');
+	await page.getByRole('button', { name: /New goal/ }).click();
+	await page.locator('[data-act="goal-kind"][data-kind="generic"]').click();
+	await page.locator('[data-act="goal-title"]').fill('Bench press 100 kg');
+	await page.getByRole('button', { name: /Add goal/ }).click();
+	await page.locator('.goal-row', { hasText: 'Bench press' }).locator('[data-act="toggle-goal-done"]').click();
+	await expect(page.locator('.goal-row', { hasText: 'Bench press' })).toHaveClass(/done/);
+	// Reload restores the Goals view; the done state came from SQLite.
+	await page.reload();
+	await expect(page.locator('.goal-row', { hasText: 'Bench press' })).toHaveClass(/done/);
 });

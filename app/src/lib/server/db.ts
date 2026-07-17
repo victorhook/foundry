@@ -339,7 +339,21 @@ const migrations: Array<(d: Database.Database) => void> = [
 			if (exists.get(name)) continue;
 			ins.run('seed-' + i++, name, kcal, protein, carbs, fat, now);
 		}
-	}
+	},
+	// v18 -> v19: goals. Weekly goals track a target count of workouts (optionally
+	// filtered to one type) within the current ISO week — progress is computed on
+	// the client from the workout log. Generic goals are open-ended and checked off.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS goal (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL,          -- 'weekly' | 'generic'
+			title TEXT NOT NULL,
+			target INTEGER,              -- weekly: count target
+			filter TEXT,                 -- weekly: routine id to match, or NULL = any workout
+			done INTEGER NOT NULL DEFAULT 0,  -- generic: completed
+			ord INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL
+		)`)
 ];
 
 function migrate() {
@@ -710,6 +724,57 @@ export function deleteNote(id: string) {
 	db.prepare('DELETE FROM note WHERE id = ?').run(id);
 }
 
+/* ---- Goals (weekly targets + open-ended generic goals) ---- */
+export function getGoals() {
+	return db
+		.prepare('SELECT id, kind, title, target, filter, done, ord, created_at FROM goal ORDER BY ord, created_at')
+		.all()
+		.map((r: any) => ({
+			id: r.id,
+			kind: r.kind,
+			title: r.title,
+			target: r.target,
+			filter: r.filter,
+			done: !!r.done,
+			ord: r.ord,
+			createdAt: r.created_at
+		}));
+}
+
+export function createGoal(g: { kind: string; title: string; target?: number | null; filter?: string | null }) {
+	const id = uid();
+	const row = db.prepare('SELECT COALESCE(MAX(ord), -1) AS m FROM goal').get() as any;
+	const ord = (row?.m ?? -1) + 1;
+	db.prepare(
+		'INSERT INTO goal (id, kind, title, target, filter, done, ord, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)'
+	).run(id, g.kind, g.title, g.target ?? null, g.filter ?? null, ord, Date.now());
+	return getGoals().find((x) => x.id === id) || null;
+}
+
+export function updateGoal(
+	id: string,
+	patch: { title?: string; target?: number | null; filter?: string | null; done?: boolean }
+) {
+	const cur = db.prepare('SELECT title, target, filter, done FROM goal WHERE id = ?').get(id) as any;
+	if (!cur) { return null; }
+	const title = patch.title !== undefined ? patch.title : cur.title;
+	const target = patch.target !== undefined ? patch.target : cur.target;
+	const filter = patch.filter !== undefined ? patch.filter : cur.filter;
+	const done = patch.done !== undefined ? (patch.done ? 1 : 0) : cur.done;
+	db.prepare('UPDATE goal SET title = ?, target = ?, filter = ?, done = ? WHERE id = ?').run(
+		title,
+		target,
+		filter,
+		done,
+		id
+	);
+	return getGoals().find((x) => x.id === id) || null;
+}
+
+export function deleteGoal(id: string) {
+	db.prepare('DELETE FROM goal WHERE id = ?').run(id);
+}
+
 export function getProgramFile(id: string) {
 	return db.prepare('SELECT filename, mime FROM program WHERE id = ?').get(id) as
 		| { filename: string; mime: string }
@@ -864,6 +929,7 @@ export function getAllData() {
 		templates: getTemplates(),
 		programs: getPrograms(),
 		notes: getNotes(),
+		goals: getGoals(),
 		foods: getFoods(),
 		meals: getMeals(),
 		profile: getProfile(),

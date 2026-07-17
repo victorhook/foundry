@@ -309,6 +309,65 @@
   }
   .wk-empty span { color: var(--muted-2); font-weight: 500; font-size: 0.86rem; }
 
+  /* ---------- Goals ---------- */
+  .goal-list { display: flex; flex-direction: column; gap: 10px; }
+  .goal-card {
+    display: block; width: 100%; text-align: left;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 13px 15px;
+    transition: transform 0.08s ease, border-color 0.12s ease;
+  }
+  .goal-card:active { transform: scale(0.99); }
+  .goal-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .goal-title { font-weight: 700; font-size: 0.96rem; display: flex; align-items: center; min-width: 0; }
+  .goal-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .goal-count { font-weight: 800; font-size: 0.9rem; color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .goal-count.done { color: var(--accent); }
+
+  .goal-bar {
+    position: relative; height: 12px; border-radius: 999px;
+    background: var(--surface-3); overflow: hidden;
+  }
+  .goal-fill {
+    height: 100%; border-radius: 999px; min-width: 0;
+    background: var(--accent);
+    filter: saturate(1.1) brightness(1.05);
+    box-shadow: 0 0 10px -2px currentColor;
+    transition: width 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* A soft sheen sweeping across an in-progress bar */
+  .goal-fill.active::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.35) 50%, transparent 80%);
+    transform: translateX(-100%); animation: goalSheen 2.2s ease-in-out infinite;
+  }
+  @keyframes goalSheen { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(320%); } }
+  .goal-fill.done { box-shadow: 0 0 14px -1px currentColor; }
+
+  /* Generic goal rows (check off) */
+  .goal-row {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 12px 14px;
+  }
+  .goal-check {
+    width: 26px; height: 26px; flex: 0 0 auto; border-radius: 8px;
+    border: 2px solid var(--line); color: #14171C; font-size: 0.9rem; font-weight: 900;
+    display: grid; place-items: center; background: none;
+  }
+  .goal-check.on { background: var(--accent); border-color: var(--accent); }
+  .goal-row-title { flex: 1; text-align: left; background: none; color: var(--text); font-weight: 600; font-size: 0.95rem; min-width: 0; }
+  .goal-row.done .goal-row-title { color: var(--muted-2); text-decoration: line-through; }
+
+  /* Home prompt when no weekly goal is set */
+  .goal-prompt {
+    width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 14px; margin-bottom: 14px; border-radius: var(--radius);
+    border: 1px dashed var(--line); background: var(--surface);
+    color: var(--muted); font-weight: 700; font-size: 0.9rem;
+  }
+  .goal-prompt .gp-go { color: var(--accent); font-size: 1.2rem; }
+
   .rpe-dot {
     width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
     display: grid; place-items: center; font-size: 0.78rem; font-weight: 800;

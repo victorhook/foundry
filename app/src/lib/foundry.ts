@@ -77,6 +77,7 @@ function load() {
     templates: [],
     programs: [],
     notes: [],
+    goals: [],
     foods: [],
     meals: [],
     profile: { dob: null, height: null, gender: null, targets: { kcal: null, protein: null, carbs: null, fat: null } },
@@ -941,6 +942,8 @@ function render() {
   else if (state.view === "progedit") { html = viewProgramEdit(); }
   else if (state.view === "notes") { html = viewNotes(); }
   else if (state.view === "noteedit") { html = viewNoteEdit(); }
+  else if (state.view === "goals") { html = viewGoals(); }
+  else if (state.view === "goaledit") { html = viewGoalEdit(); }
   else if (state.view === "exinfo") { html = viewExInfo(); }
   app.innerHTML = html + overlays();
   // Play the entrance animation only when the view actually changes, so
@@ -986,6 +989,7 @@ function buildDrawer() {
     <nav class="drawer-panel">
       <div class="drawer-head eyebrow">Foundry</div>
       ${item("home", "\u{1F3E0}", "Home")}
+      ${item("goals", "\u{1F3AF}", "Goals")}
       ${item("nutrition", "\u{1F34E}", "Nutrition")}
       ${item("history", "\u{1F4D6}", "History")}
       ${item("notes", "\u{1F4DD}", "Notes")}
@@ -1008,6 +1012,7 @@ function buildDrawer() {
       state.confirm = { title: "Sign out?", body: "You'll be logged out of Foundry.", ok: "Sign out", danger: true, onOk: () => { window.location.href = "/logout"; } };
       render();
     } else if (nav === "nutrition") { openNutrition(); }
+    else if (nav === "goals") { openGoals(); }
     else if (nav === "programs") { openPrograms(); }
     else if (nav === "notes") { openNotes(); }
     else if (nav === "photos") { state.photoTag = null; go("photos"); }
@@ -1069,6 +1074,7 @@ function viewHome() {
     ${header({ title: today })}
     <main>
       ${resume}
+      ${weeklyGoalsSection()}
       ${calendarWidget()}
 
       <div class="section-head">
@@ -3149,6 +3155,192 @@ function viewNoteEdit() {
   </div>`;
 }
 
+/* ---- Goals (weekly targets with a progress bar + open-ended generic goals) ---- */
+
+// Monday-00:00 of the week containing ts (local time), as a timestamp — used to
+// bucket workouts into weeks.
+function weekStartMs(ts) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  const dow = (d.getDay() + 6) % 7;   // Mon = 0 … Sun = 6
+  d.setDate(d.getDate() - dow);
+  return d.getTime();
+}
+
+// Does a saved workout match a weekly goal's type filter? Empty filter = any.
+function workoutMatchesFilter(w, filter) {
+  if (!filter) { return true; }
+  const r = state.routines.find((x) => x.id === filter);
+  return !!r && w.routineName === r.name;
+}
+
+// How many matching workouts happened in the current week (this goal's progress).
+function weeklyGoalCount(g) {
+  const wk = weekStartMs(Date.now());
+  return state.workouts.filter((w) => weekStartMs(w.startedAt) === wk && workoutMatchesFilter(w, g.filter)).length;
+}
+
+function goalColor(g) {
+  return (g.filter && TYPE_COLORS[g.filter]) || DEFAULT_TYPE_COLOR;
+}
+function goalFilterLabel(filter) {
+  if (!filter) { return "Any workout"; }
+  const r = state.routines.find((x) => x.id === filter);
+  return r ? r.name : "Any workout";
+}
+
+// The "cool" progress bar for one weekly goal.
+function weeklyGoalBar(g) {
+  const count = weeklyGoalCount(g);
+  const target = Math.max(1, g.target || 1);
+  const pct = Math.min(100, Math.round((count / target) * 100));
+  const done = count >= target;
+  const color = goalColor(g);
+  return `<button class="goal-card" data-act="edit-goal" data-id="${g.id}">
+    <div class="goal-top">
+      <span class="goal-title"><span class="type-dot" style="background:${color}"></span>${escAttr(g.title)}</span>
+      <span class="goal-count${done ? " done" : ""}" style="${done ? `color:${color}` : ""}">${count}/${target}${done ? " ✓" : ""}</span>
+    </div>
+    <div class="goal-bar"><div class="goal-fill${done ? " done" : ""}${!done && count > 0 ? " active" : ""}" style="width:${pct}%;background:${color};color:${color}"></div></div>
+  </button>`;
+}
+
+// Home "This week" block: weekly progress bars, or a prompt if none set.
+function weeklyGoalsSection() {
+  const weekly = state.goals.filter((g) => g.kind === "weekly");
+  if (!weekly.length) {
+    return `<button class="goal-prompt" data-act="goals">🎯 Set a weekly goal <span class="gp-go">›</span></button>`;
+  }
+  return `<div class="section-head">
+      <span class="eyebrow">This week</span>
+      <button class="back-btn" data-act="goals">Goals ›</button>
+    </div>
+    <div class="goal-list">${weekly.map(weeklyGoalBar).join("")}</div>`;
+}
+
+function openGoals() { go("goals"); }
+
+function viewGoals() {
+  const weekly = state.goals.filter((g) => g.kind === "weekly");
+  const generic = state.goals.filter((g) => g.kind === "generic");
+
+  const weeklyHtml = weekly.length
+    ? `<div class="goal-list">${weekly.map(weeklyGoalBar).join("")}</div>`
+    : `<div class="empty" style="padding:20px;">No weekly goals yet — add one to see your progress on the home screen.</div>`;
+
+  const genericHtml = generic.length
+    ? `<div class="goal-list">${generic.map((g) => `<div class="goal-row${g.done ? " done" : ""}">
+        <button class="goal-check${g.done ? " on" : ""}" data-act="toggle-goal-done" data-id="${g.id}" aria-label="Toggle done">${g.done ? "✓" : ""}</button>
+        <button class="goal-row-title" data-act="edit-goal" data-id="${g.id}">${escAttr(g.title)}</button>
+      </div>`).join("")}</div>`
+    : `<div class="empty" style="padding:20px;">No goals yet — e.g. "Bench 100 kg" or "Run a 5 k".</div>`;
+
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Home" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">This week</span></div>
+      ${weeklyHtml}
+      <div class="section-head"><span class="eyebrow">Goals</span></div>
+      ${genericHtml}
+      <button class="add-ex-btn" data-act="new-goal" style="margin-top:16px;">+  New goal</button>
+    </main>
+  </div>`;
+}
+
+function openGoalEdit(id) {
+  const g = id ? state.goals.find((x) => x.id === id) : null;
+  state.goalEdit = g
+    ? { id: g.id, kind: g.kind, title: g.title, target: g.target || 3, filter: g.filter || "" }
+    : { id: null, kind: "weekly", title: "", target: 3, filter: "" };
+  go("goaledit");
+}
+
+function viewGoalEdit() {
+  const g = state.goalEdit;
+  if (!g) { go("goals"); return ""; }
+  const editing = !!g.id;
+
+  const kindSeg = !editing
+    ? `<div class="seg" style="margin-bottom:16px;">
+        <button class="seg-btn ${g.kind === "weekly" ? "active" : ""}" data-act="goal-kind" data-kind="weekly">Weekly</button>
+        <button class="seg-btn ${g.kind === "generic" ? "active" : ""}" data-act="goal-kind" data-kind="generic">Generic</button>
+      </div>`
+    : "";
+
+  const weeklyFields = g.kind === "weekly"
+    ? `<div class="finish-block"><span class="eyebrow">Target — workouts per week</span>
+        <input class="picker-search" type="number" inputmode="numeric" min="1" value="${escAttr(g.target)}" data-act="goal-target"></div>
+      <div class="finish-block"><span class="eyebrow">Count which workouts</span>
+        <div class="chip-row">
+          <button class="chip ${!g.filter ? "active" : ""}" data-act="goal-filter" data-filter="">Any</button>
+          ${state.routines.map((r) => `<button class="chip ${g.filter === r.id ? "active" : ""}" data-act="goal-filter" data-filter="${r.id}">${r.name}</button>`).join("")}
+        </div></div>`
+    : "";
+
+  const placeholder = g.kind === "weekly" ? "e.g. Train 4× this week" : "e.g. Bench press 100 kg";
+
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Goals" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">${editing ? "Edit goal" : "New goal"}</span></div>
+      ${kindSeg}
+      <div class="finish-block"><span class="eyebrow">Title</span>
+        <input class="picker-search" type="text" value="${escAttr(g.title)}" placeholder="${placeholder}" data-act="goal-title"></div>
+      ${weeklyFields}
+    </main>
+    <div class="footer">
+      ${editing ? `<button class="btn btn-ghost" data-act="del-goal" data-id="${g.id}">Delete</button>` : ""}
+      <button class="btn btn-primary" data-act="save-goal">${editing ? "Save" : "Add goal"}</button>
+    </div>
+  </div>`;
+}
+
+async function saveGoalEdit() {
+  const g = state.goalEdit;
+  if (!g) { return; }
+  const title = (g.title || "").trim();
+  if (!title) { toast("Name the goal"); return; }
+  const payload = g.id
+    ? { id: g.id, title }
+    : { kind: g.kind, title };
+  if (g.kind === "weekly") {
+    const target = Math.round(Number(g.target));
+    if (!Number.isFinite(target) || target < 1) { toast("Target must be at least 1"); return; }
+    payload.target = target;
+    payload.filter = g.filter || null;
+  }
+  let saved;
+  try { saved = await apiPost("/api/goals", payload); }
+  catch (e) { toast("Couldn't save goal"); return; }
+  const i = state.goals.findIndex((x) => x.id === saved.id);
+  if (i >= 0) { state.goals[i] = saved; } else { state.goals.push(saved); }
+  state.goalEdit = null;
+  history.back();
+  toast(g.id ? "Goal updated" : "Goal added ✓");
+}
+
+function deleteGoalById(id) {
+  state.confirm = {
+    title: "Delete goal?",
+    ok: "Delete", danger: true,
+    onOk: () => {
+      apiDelete("/api/goals", { id }).catch(() => {});
+      state.goals = state.goals.filter((x) => x.id !== id);
+      if (state.view === "goaledit") { state.goalEdit = null; history.back(); }
+      else { render(); }
+    },
+  };
+  render();
+}
+
+function toggleGoalDone(id) {
+  const g = state.goals.find((x) => x.id === id);
+  if (!g) { return; }
+  g.done = !g.done;                    // optimistic
+  render();
+  apiPost("/api/goals", { id, done: g.done }).catch(() => { g.done = !g.done; render(); toast("Couldn't update goal"); });
+}
+
 /* ============ Event delegation ============ */
 app.addEventListener("click", (e) => {
   const t = e.target.closest("[data-act]");
@@ -3386,6 +3578,16 @@ app.addEventListener("click", (e) => {
       break;
     }
 
+    /* ---- Goals ---- */
+    case "goals": openGoals(); break;
+    case "new-goal": openGoalEdit(null); break;
+    case "edit-goal": openGoalEdit(t.dataset.id); break;
+    case "toggle-goal-done": toggleGoalDone(t.dataset.id); break;
+    case "goal-kind": if (state.goalEdit) { state.goalEdit.kind = t.dataset.kind; render(); } break;
+    case "goal-filter": if (state.goalEdit) { state.goalEdit.filter = t.dataset.filter; render(); } break;
+    case "save-goal": saveGoalEdit(); break;
+    case "del-goal": deleteGoalById(t.dataset.id); break;
+
     /* ---- Exercise info (from workout summary) ---- */
     case "ex-info": openExInfo(t.dataset.id); break;
   }
@@ -3398,6 +3600,8 @@ app.addEventListener("input", (e) => {
   if (act === "search") { state.picker.q = t.value; /* re-render list only, keep focus */ updatePickerList(); }
   else if (act === "wnote") { state.active.notes = t.value; save(); }
   else if (act === "detail-note") { changeWorkoutNotes(t.dataset.id, t.value); }
+  else if (act === "goal-title") { if (state.goalEdit) { state.goalEdit.title = t.value; } }
+  else if (act === "goal-target") { if (state.goalEdit) { state.goalEdit.target = t.value; } }
   else if (act === "ex-note") { setExNote(parseInt(t.dataset.ei, 10), t.value); }
   else if (act === "new-name") { state.picker.newName = t.value; }
   else if (act === "new-tag-text") { state.picker.newTagText = t.value; }
@@ -3507,8 +3711,8 @@ function updatePickerList() {
 }
 
 /* ============ Boot ============ */
-const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit", "notes", "noteedit", "exinfo"];
-const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program", "noteedit", "exinfo"];  // depend on non-persisted state
+const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit", "notes", "noteedit", "exinfo", "goals", "goaledit"];
+const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program", "noteedit", "exinfo", "goaledit"];  // depend on non-persisted state
 async function boot() {
   buildDrawer();
   buildPtr();
@@ -3532,6 +3736,7 @@ async function boot() {
     state.templates = data.templates || [];
     state.programs = data.programs || [];
     state.notes = data.notes || [];
+    state.goals = data.goals || [];
     state.foods = data.foods || [];
     state.meals = data.meals || [];
     state.profile = data.profile || state.profile;
