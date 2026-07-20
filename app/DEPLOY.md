@@ -108,6 +108,39 @@ sudo -u foundry DATABASE_PATH=/opt/foundry/data/foundry.db \
 Sessions are stateless, so a password change takes effect immediately (existing
 sessions keep working until they expire; restart the service to invalidate them).
 
+## Google Fit steps (optional)
+
+Foundry can pull your daily step count from Google Fit via its REST API. It's
+opt-in: with the two env vars below unset, the "Connect Google Fit" button simply
+doesn't appear. (Heads up: Google is winding the Fit REST API down in favour of
+Health Connect, so treat this as a stopgap.)
+
+One-time Google Cloud setup:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a
+   project and enable the **Fitness API** (APIs & Services → Library → "Fitness API").
+2. Configure the **OAuth consent screen**: user type **External**, fill in the app
+   name/email, add the scope `.../auth/fitness.activity.read`, and add your own
+   Google account under **Test users**. You can leave it in "Testing" mode — a
+   single-user personal app never needs Google verification.
+3. Create an **OAuth client ID** → application type **Web application**. Under
+   *Authorized redirect URIs* add exactly:
+   `https://<your-domain>/api/fit/callback`
+4. Copy the client ID + secret into `/opt/foundry/.env`:
+
+```
+GOOGLE_CLIENT_ID=<client id>.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=<client secret>
+```
+
+`systemctl restart foundry`, then open the app → **Profile → Steps → Connect
+Google Fit**, approve, and it syncs the last 30 days. It refreshes tokens on its
+own; use **Sync now** to pull the latest, or **Disconnect** to revoke.
+
+The redirect URI is auto-derived from the request origin (via adapter-node's
+`ORIGIN`). If yours differs, pin it with `GOOGLE_REDIRECT_URI` — it must match the
+console entry byte-for-byte.
+
 ## Schema changes / migrations
 
 Schema evolves via a built-in runner (SQLite `user_version`) in `src/lib/server/db.ts`.

@@ -84,6 +84,9 @@ function load() {
     bodyWeights: [],
     albums: [],
     photos: [],
+    steps: [],
+    fitConnected: false,
+    fitSyncing: false,
     active: draft.active || null,
     view: draft.view || "home",
     picker: draft.picker || { q: "", cat: "All" },
@@ -1070,10 +1073,23 @@ function viewHome() {
       })()
     : "";
 
+  const stepsToday = todaySteps();
+  const stepsCard = state.fitConnected && stepsToday != null
+    ? `<button class="resume-card" data-act="profile">
+        <span class="resume-ico">👟</span>
+        <span class="resume-body">
+          <span class="resume-title">${stepsToday.toLocaleString()} steps</span>
+          <span class="resume-sub">Today · Google Fit</span>
+        </span>
+        <span class="resume-go">›</span>
+      </button>`
+    : "";
+
   return `<div class="app">
     ${header({ title: today })}
     <main>
       ${resume}
+      ${stepsCard}
       ${weeklyGoalsSection()}
       ${calendarWidget()}
 
@@ -1928,6 +1944,84 @@ async function deleteWeighIn(id) {
   render();
 }
 
+/* ============ Google Fit (steps) ============ */
+// Steps are keyed by local YYYY-MM-DD (matching the server's bucketing).
+function stepsForDay(ts) {
+  const key = dateInputValue(ts);
+  const row = state.steps.find((s) => s.day === key);
+  return row ? row.steps : null;
+}
+function todaySteps() { return stepsForDay(Date.now()); }
+
+// After the OAuth round-trip Google sends us back to /?fit=<status>. Turn that
+// into a toast, clean the URL, and kick off a first sync on success.
+function handleFitReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const status = params.get("fit");
+  if (!status) { return; }
+  history.replaceState(history.state, "", window.location.pathname);
+  if (status === "connected") {
+    state.fitConnected = true;
+    toast("Google Fit connected");
+    syncFit();
+  } else if (status === "denied") {
+    toast("Google Fit access was denied");
+  } else {
+    toast("Couldn't connect Google Fit");
+  }
+}
+
+async function syncFit(days) {
+  if (state.fitSyncing) { return; }
+  state.fitSyncing = true;
+  render();
+  try {
+    const res = await apiPost("/api/fit", days ? { days } : {});
+    state.steps = res.steps || [];
+    state.fitConnected = true;
+    toast("Steps synced");
+  } catch (e) {
+    toast("Couldn't sync steps");
+  } finally {
+    state.fitSyncing = false;
+    render();
+  }
+}
+
+function disconnectFit() {
+  apiDelete("/api/fit", {}).catch(() => {});
+  state.fitConnected = false;
+  render();
+  toast("Google Fit disconnected");
+}
+
+function fitSection() {
+  if (!state.fitConnected) {
+    return `<div class="section-head" style="margin-top:8px;"><span class="eyebrow">Steps</span></div>
+      <div class="finish-block">
+        <a class="btn btn-primary" href="/api/fit/connect" style="text-decoration:none;text-align:center;">Connect Google Fit</a>
+        <div class="hint" style="margin-top:8px;">Pull your daily step count from Google Fit.</div>
+      </div>`;
+  }
+  const today = todaySteps();
+  const recent = state.steps.slice(-7).reverse();
+  const rows = recent.map((s) => {
+    const [y, m, d] = s.day.split("-").map(Number);
+    const label = new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    return `<div class="wrow"><span class="wrow-date">${label}</span><span class="wrow-val tnum">${s.steps.toLocaleString()}</span></div>`;
+  }).join("");
+  const stat = (v, k) => `<div class="dstat"><div class="v tnum">${v}</div><div class="k">${k}</div></div>`;
+  return `<div class="section-head" style="margin-top:8px;"><span class="eyebrow">Steps</span></div>
+    <div class="detail-stat-row">
+      ${stat(today != null ? today.toLocaleString() : "–", "Today")}
+    </div>
+    <div class="weigh-add">
+      <button class="chip" data-act="fit-sync" ${state.fitSyncing ? "disabled" : ""}>${state.fitSyncing ? "Syncing…" : "Sync now"}</button>
+      <button class="chip" data-act="fit-disconnect">Disconnect</button>
+    </div>
+    ${rows ? `<div class="wlist">${rows}</div>` : `<div class="empty">No steps synced yet.</div>`}`;
+}
+
 function viewProfile() {
   const p = state.profile;
   const age = ageFrom(p.dob);
@@ -1983,6 +2077,8 @@ function viewProfile() {
       </div>
 
       ${history ? `<div class="wlist">${history}</div>` : ""}
+
+      ${fitSection()}
     </main>
   </div>`;
 }
@@ -3370,6 +3466,16 @@ app.addEventListener("click", (e) => {
     case "profile": go("profile"); break;
     case "photos": state.photoTag = null; go("photos"); break;
     case "gender": setGender(t.dataset.g); break;
+    case "fit-sync": syncFit(); break;
+    case "fit-disconnect":
+      state.confirm = {
+        title: "Disconnect Google Fit?",
+        body: "Foundry will stop syncing steps. Already-synced days are kept.",
+        ok: "Disconnect", danger: true,
+        onOk: () => disconnectFit(),
+      };
+      render();
+      break;
     case "add-weigh": addWeighIn(); break;
     case "del-weigh": deleteWeighIn(parseInt(t.dataset.id, 10)); break;
     case "new-album": state.newAlbumOpen = true; render(); break;
@@ -3744,9 +3850,12 @@ async function boot() {
     state.bodyWeights = data.bodyWeights || [];
     state.albums = data.albums || [];
     state.photos = data.photos || [];
+    state.steps = data.steps || [];
+    state.fitConnected = !!data.fitConnected;
     state.loaded = true;
     render();
     if (state.view === "nutrition") { loadDayLog(); }
+    handleFitReturn();
   } catch (e) {
     toast("Offline — showing cached view");
   }

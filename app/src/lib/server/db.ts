@@ -353,6 +353,23 @@ const migrations: Array<(d: Database.Database) => void> = [
 			done INTEGER NOT NULL DEFAULT 0,  -- generic: completed
 			ord INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL
+		)`),
+	// v19 -> v20: Google Fit integration. `fit_account` is a single row holding the
+	// OAuth tokens (server-side only — the browser never sees them). `step_day` is
+	// the daily step count per calendar day (YYYY-MM-DD), synced from the Fit REST
+	// API and treated as just another piece of Foundry data (offline-readable).
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS fit_account (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			refresh_token TEXT,
+			access_token TEXT,
+			access_expiry INTEGER,        -- ms epoch when access_token stops being valid
+			connected_at INTEGER
+		);
+		CREATE TABLE IF NOT EXISTS step_day (
+			day TEXT PRIMARY KEY,         -- YYYY-MM-DD (local calendar day)
+			steps INTEGER NOT NULL,
+			synced_at INTEGER NOT NULL
 		)`)
 ];
 
@@ -935,8 +952,79 @@ export function getAllData() {
 		profile: getProfile(),
 		bodyWeights: getBodyWeights(),
 		albums: getAlbums(),
-		photos: getPhotos()
+		photos: getPhotos(),
+		steps: getStepDays(),
+		fitConnected: isFitConnected()
 	};
+}
+
+// --- Google Fit ---
+export type FitAccount = {
+	refresh_token: string | null;
+	access_token: string | null;
+	access_expiry: number | null;
+};
+
+export function getFitAccount(): FitAccount | null {
+	const r = db
+		.prepare('SELECT refresh_token, access_token, access_expiry FROM fit_account WHERE id = 1')
+		.get() as any;
+	if (!r) {
+		return null;
+	}
+	return {
+		refresh_token: r.refresh_token ?? null,
+		access_token: r.access_token ?? null,
+		access_expiry: r.access_expiry ?? null
+	};
+}
+
+export function isFitConnected(): boolean {
+	return !!getFitAccount()?.refresh_token;
+}
+
+/** Store tokens after the OAuth exchange. A missing refresh_token keeps the old
+ *  one — Google only returns it on the first consent, not on later refreshes. */
+export function saveFitTokens(t: {
+	refresh_token?: string | null;
+	access_token: string | null;
+	access_expiry: number | null;
+}) {
+	const existing = getFitAccount();
+	const refresh = t.refresh_token || existing?.refresh_token || null;
+	// connected_at is only meaningful on first insert; the UPDATE branch ignores it.
+	db.prepare(
+		`INSERT INTO fit_account (id, refresh_token, access_token, access_expiry, connected_at)
+		 VALUES (1, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET refresh_token = excluded.refresh_token,
+			access_token = excluded.access_token, access_expiry = excluded.access_expiry`
+	).run(refresh, t.access_token, t.access_expiry, Date.now());
+}
+
+export function clearFitAccount() {
+	db.prepare('DELETE FROM fit_account').run();
+}
+
+export function getStepDays(): Array<{ day: string; steps: number }> {
+	return db
+		.prepare('SELECT day, steps FROM step_day ORDER BY day')
+		.all()
+		.map((r: any) => ({ day: r.day, steps: r.steps }));
+}
+
+/** Upsert a batch of {day, steps} rows from a Fit sync. */
+export function upsertStepDays(rows: Array<{ day: string; steps: number }>) {
+	const now = Date.now();
+	const stmt = db.prepare(
+		`INSERT INTO step_day (day, steps, synced_at) VALUES (?, ?, ?)
+		 ON CONFLICT(day) DO UPDATE SET steps = excluded.steps, synced_at = excluded.synced_at`
+	);
+	const tx = db.transaction((batch: Array<{ day: string; steps: number }>) => {
+		for (const r of batch) {
+			stmt.run(r.day, r.steps, now);
+		}
+	});
+	tx(rows);
 }
 
 // --- Profile / weight ---
