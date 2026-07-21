@@ -1352,8 +1352,8 @@ function workoutStats(w) {
   return { ex: w.entries.length, sets, volume, minutes, km, cardio };
 }
 
-function statTile(val, lbl) {
-  return `<div class="wk-stat"><span class="wk-val">${val}</span><span class="wk-lbl">${lbl}</span></div>`;
+function statTile(val, lbl, primary) {
+  return `<div class="wk-stat"><span class="wk-val${primary ? " accent" : ""}">${val}</span><span class="wk-lbl">${lbl}</span></div>`;
 }
 
 function workoutOverview(w) {
@@ -1363,9 +1363,9 @@ function workoutOverview(w) {
   if (st.sets) { tiles.push(statTile(st.sets, st.sets === 1 ? "set" : "sets")); }
   if (st.volume > 0) {
     const v = st.volume >= 1000 ? (st.volume / 1000).toFixed(st.volume >= 10000 ? 0 : 1) + "k" : String(Math.round(st.volume));
-    tiles.push(statTile(v, "kg volume"));
+    tiles.push(statTile(v, "kg volume", true));
   } else if (st.minutes) {
-    tiles.push(statTile(st.minutes, "min"));
+    tiles.push(statTile(st.minutes, "min", true));
     if (st.km > 0) { tiles.push(statTile(st.km, "km")); }
   }
   return `<div class="wk-stats">${tiles.join("")}</div>`;

@@ -244,7 +244,7 @@
 
   .set-row {
     display: flex; align-items: center; gap: 10px;
-    padding: 9px 16px;
+    padding: 7px 16px;
     border-top: 1px solid var(--line);
   }
   .set-num {
@@ -263,7 +263,7 @@
   }
   .step-grp { position: relative; flex: 1; display: flex; align-items: stretch; background: var(--surface-2); border-radius: var(--radius-sm); }
   .step-btn {
-    width: 34px; color: var(--muted); font-size: 1.2rem; font-weight: 600;
+    width: 30px; color: var(--muted); font-size: 1.2rem; font-weight: 600;
     display: grid; place-items: center; flex-shrink: 0;
   }
   .step-btn:active { color: var(--accent); background: var(--surface-3); }
@@ -271,7 +271,7 @@
   .step-btn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
   .step-val {
     flex: 1; width: 100%; text-align: center; background: none; border: none;
-    color: var(--text); font-weight: 700; font-size: 0.98rem; min-width: 0;
+    color: var(--text); font-weight: 700; font-size: 1.06rem; min-width: 0;
     font-variant-numeric: tabular-nums; padding: 9px 0;
     -moz-appearance: textfield;
   }
@@ -289,19 +289,28 @@
   .sh-num { width: 24px; text-align: center; flex-shrink: 0; }
   .sh-cols { flex: 1; display: flex; gap: 10px; }
   .sh-cols span { flex: 1; text-align: center; }
-  .sh-del { width: 22px; flex-shrink: 0; }
+  .sh-del { width: 26px; flex-shrink: 0; }
 
-  /* Workout overview: at-a-glance totals under the title */
+  /* Workout overview: at-a-glance totals under the title.
+     One bordered strip with dividers, so tiles stay equal-width and aligned
+     no matter how long a label is (e.g. "kg volume"). */
   .wk-stats {
-    display: flex; gap: 10px; margin: 0 0 16px;
+    display: flex; margin: 0 0 16px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden;
   }
   .wk-stat {
-    flex: 1; background: var(--surface); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: 12px 8px;
-    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    flex: 1; min-width: 0; padding: 9px 6px;
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    border-left: 1px solid var(--line);
   }
-  .wk-val { font-size: 1.4rem; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-  .wk-lbl { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .wk-stat:first-child { border-left: none; }
+  .wk-val { font-size: 1.18rem; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .wk-val.accent { color: var(--accent); }
+  .wk-lbl {
+    font-size: 0.58rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--muted); white-space: nowrap;
+  }
 
   .wk-empty {
     text-align: center; color: var(--muted); padding: 26px 16px; margin-bottom: 4px;
@@ -374,7 +383,7 @@
     background: var(--surface-2); color: var(--muted-2);
     border: 1px solid var(--line);
   }
-  .set-del { color: var(--muted-2); font-size: 1.1rem; padding: 2px 4px; flex-shrink: 0; }
+  .set-del { width: 26px; text-align: center; color: var(--muted-2); font-size: 1.1rem; padding: 2px 0; flex-shrink: 0; }
   .set-del:active { color: var(--hot); }
 
   .addset {
