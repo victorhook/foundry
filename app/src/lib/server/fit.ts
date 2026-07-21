@@ -21,11 +21,6 @@ const AGGREGATE_URL = 'https://www.googleapis.com/fitness/v1/users/me/dataset:ag
 // Read-only access to activity data (steps live here). Nothing else is requested.
 const SCOPE = 'https://www.googleapis.com/auth/fitness.activity.read';
 
-// Google's own merged/estimated step stream — dedupes across phone + watch, which
-// is what the Fit app itself shows. Far better than a raw single-source count.
-const ESTIMATED_STEPS_SOURCE =
-	'derived:com.google.step_count.delta:com.google.android.gms:estimated_steps';
-
 const DAY_MS = 86_400_000;
 
 export function fitConfigured(): boolean {
@@ -162,12 +157,11 @@ export async function fetchStepDays(days: number): Promise<Array<{ day: string; 
 			'content-type': 'application/json'
 		},
 		body: JSON.stringify({
-			aggregateBy: [
-				{
-					dataTypeName: 'com.google.step_count.delta',
-					dataSourceId: ESTIMATED_STEPS_SOURCE
-				}
-			],
+			// Aggregate by data type only (no explicit dataSourceId): Google merges
+			// all step sources server-side and returns its estimated daily total —
+			// the same number the Fit app shows. Pinning the derived estimated_steps
+			// source directly 403s ("not readable") for many accounts.
+			aggregateBy: [{ dataTypeName: 'com.google.step_count.delta' }],
 			bucketByTime: { durationMillis: DAY_MS },
 			startTimeMillis,
 			endTimeMillis
