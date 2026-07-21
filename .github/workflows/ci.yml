@@ -33,8 +33,25 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Cache the Playwright browser binaries so we don't re-download Chromium
+      # (~100 MB) every run. Keyed on the lockfile — a Playwright version bump
+      # changes the lock, which busts the cache and pulls the matching browser.
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        # Cache hit: only (re)install the OS libraries — the browser is already
+        # there. Miss: pull the browser + its system deps.
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       - name: E2E tests
         run: npm run test:e2e
@@ -46,6 +63,16 @@ jobs:
           path: app/playwright-report
           retention-days: 7
 
+      # Hand the built bundle to the deploy job so it doesn't reinstall + rebuild
+      # from scratch — this is exactly what gets shipped.
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: app/build
+          if-no-files-found: error
+          retention-days: 1
+
   deploy:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -55,16 +82,16 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     steps:
+      # Checkout only supplies the files we rsync alongside the build (package
+      # manifests, deploy/, scripts/). No npm install or build here — the build
+      # comes from the test job's artifact.
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Download build
+        uses: actions/download-artifact@v4
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-
-      - name: Install deps & build
-        run: npm ci && npm run build
+          name: build
+          path: app/build
 
       - name: Set up SSH
         run: |
