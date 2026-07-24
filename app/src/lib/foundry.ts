@@ -47,14 +47,20 @@ const SEED_ROUTINES = [
 // Per-type accent colors. Deliberately kept in the blue→violet→pink range so they
 // never read like the pain/feel heat scale (teal → amber → red). Templates and
 // custom/empty workouts fall back to the app accent.
+// Workout-type palette — "warm brand, calm data" direction. A red-anchored
+// categorical family at matched OKLCH lightness/chroma (L≈0.62, C≈0.13),
+// validated colourblind-safe on the dark ground; brand orange (--accent) stays
+// reserved for actions, never data.
 const TYPE_COLORS = {
-  gym:     "#5B8CFF",  // blue
-  bike:    "#18B6E6",  // cyan
-  bikeint: "#6C6CF5",  // indigo
-  run:     "#FF5CA8",  // pink
-  walk:    "#A46CFF",  // violet
+  gym:     "#429C5A",  // green
+  bike:    "#4C88D3",  // blue
+  bikeint: "#9372C8",  // violet
+  run:     "#C8635D",  // red
+  walk:    "#009D9E",  // teal
 };
-const DEFAULT_TYPE_COLOR = "var(--accent)";
+// Untyped workouts (custom templates, empty) fall back to a neutral, not the
+// brand orange — orange means "action" in this scheme, not a data category.
+const DEFAULT_TYPE_COLOR = "var(--muted)";
 
 /* ============ State ============ */
 // Server-backed collections start empty and are filled by boot() from /api/data.
