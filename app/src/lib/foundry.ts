@@ -371,8 +371,16 @@ function repeatWorkout(w) {
 function addExerciseToActive(id) {
   state.active.entries.push(newEntry(exById(id)));
   setOnlyExpanded(state.active.entries.length - 1);
+  markPickerAdded(id);
   save();
-  history.back();   // pop the picker off the stack, back to the workout
+  toast(`Added ${exById(id).name}`);
+  render();   // stay in the picker so several exercises can be added in one trip
+}
+
+// Track what's been added this picker session (for the ✓ badge + Done count).
+function markPickerAdded(id) {
+  state.picker.added = state.picker.added || [];
+  state.picker.added.push(id);
 }
 
 // Move a saved workout to a different day (edit its date from the detail screen).
@@ -475,7 +483,9 @@ function addExerciseToTemplate(id) {
     reps: last && last.reps != null ? last.reps : DEFAULT_STRENGTH_SET.reps,
     weight: ex.bodyweight ? null : (last && last.weight != null ? last.weight : DEFAULT_STRENGTH_SET.weight),
   });
-  history.back();   // pop the picker, back to the template editor
+  markPickerAdded(id);
+  toast(`Added ${ex.name}`);
+  render();   // stay in the picker so several exercises can be added in one trip
 }
 
 function delTplEntry(idx) {
@@ -687,19 +697,6 @@ function addExPainNew(entryIdx) {
   if (c) { setExPainCat(entryIdx, c); } else { render(); }
 }
 
-/* Inline "new pain area" — finish screen */
-function openFinishPainNew() {
-  state.active.painNewOpen = true;
-  render();
-}
-function addFinishPainNew() {
-  const w = state.active;
-  const c = addPainCategory(w.painNewText);
-  w.painNewOpen = false;
-  w.painNewText = "";
-  if (c) { focusFinishPain(c); } else { render(); }
-}
-
 /* ---- Custom exercises (create + edit) ---- */
 // Open the shared exercise form. exId = null → create; otherwise edit that exercise.
 function openExerciseForm(exId) {
@@ -756,7 +753,7 @@ function addNewTag(name) {
 }
 
 async function saveExercise() {
-  const name = (state.picker.newName || "").trim();
+  const name = (state.picker.newName || "").trim().slice(0, 30);
   if (!name) { toast("Add a name first"); return; }
   const tags = state.picker.newTags.slice();
   const editingId = state.picker.editingId;
@@ -833,26 +830,6 @@ function setField(entryIdx, setIdx, field, value) {
     set.distance = walkDistance(set.duration, set.pace);
   }
   save();
-}
-
-// Finish-screen pain: state.active.pains is a map { cat: level }; painFocus is
-// the category whose 1-10 scale is currently shown.
-function focusFinishPain(cat) {
-  const w = state.active;
-  w.painFocus = cat;
-  if (!w.pains[cat]) { w.pains[cat] = DEFAULT_PAIN_LEVEL; }
-  save();
-  render();
-}
-
-function setFinishPainLevel(level) {
-  const w = state.active;
-  if (w.painFocus) { w.pains[w.painFocus] = level; save(); render(); }
-}
-
-function removeFinishPain() {
-  const w = state.active;
-  if (w.painFocus) { delete w.pains[w.painFocus]; w.painFocus = null; save(); render(); }
 }
 
 async function finishWorkout() {
@@ -1597,11 +1574,13 @@ function pickerItemHtml(e) {
   const thumb = e.image
     ? `<img class="p-thumb" src="/api/file/${e.image}" loading="lazy" alt="">`
     : `<span class="p-thumb p-thumb-empty">\u{1F3CB}️</span>`;
-  return `<button class="ex-pick" data-act="pick" data-id="${e.id}">
+  const count = (state.picker.added || []).filter((x) => x === e.id).length;
+  const add = count ? `✓${count > 1 ? " " + count : ""}` : "+";
+  return `<button class="ex-pick${count ? " added" : ""}" data-act="pick" data-id="${e.id}">
     ${thumb}
     <div style="flex:1;min-width:0;"><div class="p-name">${e.name}</div>
     <div class="p-muscle">${(e.muscles || []).join(" · ")}</div></div>
-    <span class="p-add">+</span>
+    <span class="p-add">${add}</span>
   </button>`;
 }
 
@@ -1618,6 +1597,7 @@ function viewPicker() {
   const listHtml = list.length ? list.map(pickerItemHtml).join("") : `<div class="empty">No exercises yet — add one.</div>`;
   const backTo = state.picker.backTo || "active";
   const backLabel = backTo === "tpledit" ? "Template" : "Workout";
+  const addedCount = (state.picker.added || []).length;
 
   return `<div class="app">
     ${header({ back: true, backLabel })}
@@ -1627,6 +1607,9 @@ function viewPicker() {
       <button class="add-ex-btn" data-act="new-ex" style="margin-bottom:14px;">+  New exercise</button>
       ${listHtml}
     </main>
+    ${addedCount ? `<div class="footer">
+      <button class="btn btn-primary" data-act="nav-back">Done · ${addedCount} added</button>
+    </div>` : ""}
   </div>`;
 }
 
@@ -1644,7 +1627,7 @@ function viewExerciseForm() {
     ${header({ back: true, backAct: "close-create", backLabel: editing ? "Back" : "Cancel" })}
     <main>
       <div class="section-head"><span class="eyebrow">${editing ? "Edit exercise" : "New exercise"}</span></div>
-      <input class="picker-search" id="new-name" placeholder="Name" value="${escAttr(name)}" data-act="new-name" autofocus>
+      <input class="picker-search" id="new-name" placeholder="Name" value="${escAttr(name)}" data-act="new-name" maxlength="30" autofocus>
       <div class="eyebrow" style="margin:18px 2px 10px;">Tags <span style="color:var(--muted-2);font-weight:600;">· tap to toggle</span></div>
       <div class="chip-row" style="margin-bottom:12px;">${chips}</div>
       <div class="inline-new" style="width:100%;">
@@ -1696,27 +1679,6 @@ function viewFinish() {
     energyBtns.push(`<button class="rpe-btn ${sel ? "sel" : ""}" data-act="energy" data-v="${i}" style="${sel ? "background:var(--accent);color:#1a0f08;" : ""}">${i}</button>`);
   }
 
-  const painChips = state.painCategories.map((cat) => {
-    const lvl = w.pains[cat];
-    const style = lvl
-      ? `background:${heatColor(lvl)};color:#14171C;border-color:transparent;`
-      : (w.painFocus === cat ? "border-color:var(--accent);color:var(--accent);" : "");
-    return `<button class="chip ${lvl ? "active" : ""}" data-act="finish-pain-cat" data-cat="${escAttr(cat)}" style="${style}">${cat}${lvl ? ` ${lvl}` : ""}</button>`;
-  }).join("");
-
-  const painScale = w.painFocus
-    ? `<div class="pain-edit" style="padding:14px 0 0;border:none;">
-        <div class="eyebrow" style="margin-bottom:8px;">${w.painFocus} — level</div>
-        <div class="rpe-scale">${levelBtns("finish-pain-level", null, w.pains[w.painFocus])}</div>
-        <button class="text-btn" data-act="finish-pain-remove">Remove</button>
-      </div>`
-    : "";
-
-  const newHtml = w.painNewOpen
-    ? inlineNewField("finish-pain-new-text", "finish-pain-new-add", null, w.painNewText || "", "New area…")
-    : `<button class="chip" data-act="finish-pain-new">+ New</button>`;
-  const painHtml = `<div class="chip-row">${painChips}${newHtml}</div>${painScale}`;
-
   return `<div class="app">
     ${header({ back: true, backLabel: "Workout" })}
     <main>
@@ -1750,11 +1712,6 @@ function viewFinish() {
       <div class="finish-block">
         <span class="eyebrow">Energy</span>
         <div class="rpe-scale">${energyBtns.join("")}</div>
-      </div>
-
-      <div class="finish-block">
-        <span class="eyebrow">Pain</span>
-        ${painHtml}
       </div>
 
       <div class="finish-block">
@@ -3518,13 +3475,13 @@ app.addEventListener("click", (e) => {
       break;
     }
     case "close-tpledit": { const back = state.templateReturn || "templates"; state.templateReturn = null; state.templateEdit = null; go(back); break; }
-    case "add-tpl-ex": state.picker = { q: "", cat: "All", target: "template", backTo: "tpledit" }; go("picker"); break;
+    case "add-tpl-ex": state.picker = { q: "", cat: "All", target: "template", backTo: "tpledit", added: [] }; go("picker"); break;
     case "del-tpl-entry": delTplEntry(parseInt(t.dataset.i, 10)); break;
     case "tpl-inc": bumpTplField(parseInt(t.dataset.i, 10), t.dataset.field, +1); break;
     case "tpl-dec": bumpTplField(parseInt(t.dataset.i, 10), t.dataset.field, -1); break;
     case "save-template": saveTemplateEdit(); break;
     case "save-as-template": saveActiveAsTemplate(); break;
-    case "open-picker": state.picker = { q: "", cat: "All", target: "active", backTo: "active" }; go("picker"); break;
+    case "open-picker": state.picker = { q: "", cat: "All", target: "active", backTo: "active", added: [] }; go("picker"); break;
     case "open-finish": go("finish"); break;
     case "cancel":
       state.confirm = {
@@ -3574,11 +3531,6 @@ app.addEventListener("click", (e) => {
     case "save-ex": saveExercise(); break;
     case "feel": state.active.feel = parseInt(t.dataset.v, 10); save(); render(); break;
     case "energy": state.active.energy = parseInt(t.dataset.v, 10); save(); render(); break;
-    case "finish-pain-cat": focusFinishPain(t.dataset.cat); break;
-    case "finish-pain-level": setFinishPainLevel(parseInt(t.dataset.v, 10)); break;
-    case "finish-pain-remove": removeFinishPain(); break;
-    case "finish-pain-new": openFinishPainNew(); break;
-    case "finish-pain-new-add": addFinishPainNew(); break;
     case "set-theme": setActiveTheme(t.dataset.theme); break;
     case "theme-new": openFinishThemeNew(); break;
     case "theme-new-add": addFinishThemeNew(); break;
@@ -3719,7 +3671,6 @@ app.addEventListener("input", (e) => {
   else if (act === "up-caption") { if (state.pendingUpload) { state.pendingUpload.caption = t.value; } }
   else if (act === "up-tags") { if (state.pendingUpload) { state.pendingUpload.tags = t.value; } }
   else if (act === "ex-pain-new-text") { state.active.entries[parseInt(t.dataset.ei, 10)].painNewText = t.value; }
-  else if (act === "finish-pain-new-text") { state.active.painNewText = t.value; }
   else if (act === "theme-new-text") { state.active.themeNewText = t.value; }
   else if (act === "detail-theme-new-text") { state.detailThemeNewText = t.value; }
   else if (act === "tpl-name") { state.templateEdit.name = t.value; }
@@ -3860,8 +3811,14 @@ async function boot() {
     toast("Offline — showing cached view");
   }
 }
-/* ---- Drag to reorder exercises (pointer-based, touch-friendly) ---- */
+/* ---- Drag to reorder exercises (pointer-based, touch-friendly) ----
+   Positions are stored in document coordinates (viewport + scrollY) so the
+   card keeps tracking the finger while the page auto-scrolls past a long list. */
 let drag = null;
+let dragRaf = null;
+const DRAG_EDGE = 96;   // px from top/bottom where auto-scroll kicks in
+const DRAG_SPEED = 16;  // max px per frame
+
 app.addEventListener("pointerdown", (e) => {
   const h = e.target.closest("[data-drag]");
   if (!h || state.view !== "active" || !state.active) { return; }
@@ -3869,24 +3826,52 @@ app.addEventListener("pointerdown", (e) => {
   const container = card && card.parentElement;
   if (!card || !container) { return; }
   e.preventDefault();
+  const sy = window.scrollY;
   const cardEls = Array.from(container.querySelectorAll(".ex-card"));
   const dragIndex = cardEls.indexOf(card);
-  const rects = cardEls.map((el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
-  drag = { dragIndex, newIndex: dragIndex, el: card, count: cardEls.length, mids: rects, startY: e.clientY };
+  const mids = cardEls.map((el) => { const r = el.getBoundingClientRect(); return r.top + sy + r.height / 2; });
+  drag = { dragIndex, newIndex: dragIndex, el: card, count: cardEls.length, mids, startY: e.clientY, startScroll: sy, pointerY: e.clientY };
   card.classList.add("dragging");
+  document.body.classList.add("reordering");
   try { h.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  dragRaf = requestAnimationFrame(dragTick);
 });
+
+// Recompute the card's offset + target slot from the latest pointer/scroll.
+function positionDrag() {
+  if (!drag) { return; }
+  const dy = (drag.pointerY - drag.startY) + (window.scrollY - drag.startScroll);
+  drag.el.style.transform = `translateY(${dy}px)`;
+  const docY = drag.pointerY + window.scrollY;
+  let ni = 0;
+  drag.mids.forEach((mid, i) => { if (i !== drag.dragIndex && docY > mid) { ni++; } });
+  drag.newIndex = Math.max(0, Math.min(drag.count - 1, ni));
+}
+
+// rAF loop: auto-scroll when the finger nears a screen edge, then reposition.
+function dragTick() {
+  if (!drag) { dragRaf = null; return; }
+  const y = drag.pointerY;
+  const vh = window.innerHeight;
+  let d = 0;
+  if (y < DRAG_EDGE) { d = -Math.ceil((DRAG_EDGE - y) / DRAG_EDGE * DRAG_SPEED); }
+  else if (y > vh - DRAG_EDGE) { d = Math.ceil((y - (vh - DRAG_EDGE)) / DRAG_EDGE * DRAG_SPEED); }
+  if (d) { window.scrollBy(0, d); }
+  positionDrag();
+  dragRaf = requestAnimationFrame(dragTick);
+}
+
 document.addEventListener("pointermove", (e) => {
   if (!drag) { return; }
-  drag.el.style.transform = `translateY(${e.clientY - drag.startY}px)`;
-  let ni = 0;
-  drag.mids.forEach((mid, i) => { if (i !== drag.dragIndex && e.clientY > mid) { ni++; } });
-  drag.newIndex = Math.max(0, Math.min(drag.count - 1, ni));
+  drag.pointerY = e.clientY;
+  positionDrag();
 });
 function endDrag(commit) {
+  if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = null; }
   if (!drag) { return; }
   const { dragIndex, newIndex, el } = drag;
   el.classList.remove("dragging");
+  document.body.classList.remove("reordering");
   el.style.transform = "";
   drag = null;
   if (commit && newIndex !== dragIndex && state.active) {
@@ -3898,6 +3883,24 @@ function endDrag(commit) {
 }
 document.addEventListener("pointerup", () => endDrag(true));
 document.addEventListener("pointercancel", () => endDrag(false));
+
+/* ---- Keep free-text fields visible above the fixed footer + keyboard ----
+   The finish/active footer is position:fixed and would otherwise sit over a
+   note as you type it. While a note/textarea is focused we tuck the footer
+   away and scroll the field into view. */
+function isKbField(el) {
+  return !!el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.classList.contains("ex-note")));
+}
+document.addEventListener("focusin", (e) => {
+  if (!isKbField(e.target)) { return; }
+  document.body.classList.add("kb-editing");
+  // Let the on-screen keyboard animate in first, then centre the field.
+  setTimeout(() => { try { e.target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (err) { /* ignore */ } }, 250);
+});
+document.addEventListener("focusout", (e) => {
+  if (!isKbField(e.target) || isKbField(e.relatedTarget)) { return; }
+  document.body.classList.remove("kb-editing");
+});
 
 // Phone/browser Back button: SvelteKit updates $page.state on back/forward. We
 // react here — close an open overlay first, else move to the popped view.

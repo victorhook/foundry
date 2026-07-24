@@ -439,6 +439,12 @@ export function getUserByName(username: string) {
 		| undefined;
 }
 
+// The app is single-user; the API bearer token authenticates as this account.
+export function getFirstUserId(): number | null {
+	const row = db.prepare('SELECT id FROM user ORDER BY id LIMIT 1').get() as { id: number } | undefined;
+	return row ? row.id : null;
+}
+
 // --- Data queries ---
 // `muscle` is stored as a comma-separated list; exposed as a `muscles` array (tags).
 function splitMuscles(s: string | null): string[] {
