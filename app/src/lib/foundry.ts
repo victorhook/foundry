@@ -368,13 +368,17 @@ function repeatWorkout(w) {
   toast("Copied — adjust and finish");
 }
 
-function addExerciseToActive(id) {
+// opts.back → return straight to the workout (used by the create-new-exercise
+// flow, which is a deliberate one-shot). Default → stay in the picker so several
+// existing exercises can be added in one trip (✓ badge + "Done" to return).
+function addExerciseToActive(id, opts) {
   state.active.entries.push(newEntry(exById(id)));
   setOnlyExpanded(state.active.entries.length - 1);
-  markPickerAdded(id);
   save();
+  if (opts && opts.back) { history.back(); return; }
+  markPickerAdded(id);
   toast(`Added ${exById(id).name}`);
-  render();   // stay in the picker so several exercises can be added in one trip
+  render();
 }
 
 // Track what's been added this picker session (for the ✓ badge + Done count).
@@ -1050,23 +1054,10 @@ function viewHome() {
       })()
     : "";
 
-  const stepsToday = todaySteps();
-  const stepsCard = state.fitConnected && stepsToday != null
-    ? `<button class="resume-card" data-act="profile">
-        <span class="resume-ico">👟</span>
-        <span class="resume-body">
-          <span class="resume-title">${stepsToday.toLocaleString()} steps</span>
-          <span class="resume-sub">Today · Google Fit</span>
-        </span>
-        <span class="resume-go">›</span>
-      </button>`
-    : "";
-
   return `<div class="app">
     ${header({ title: today })}
     <main>
       ${resume}
-      ${stepsCard}
       ${weeklyGoalsSection()}
       ${calendarWidget()}
 
@@ -1912,23 +1903,29 @@ function todaySteps() { return stepsForDay(Date.now()); }
 
 // After the OAuth round-trip Google sends us back to /?fit=<status>. Turn that
 // into a toast, clean the URL, and kick off a first sync on success.
+// Returns true if it handled an OAuth return (and kicked off a sync), so boot()
+// knows not to also fire the routine auto-sync.
 function handleFitReturn() {
   const params = new URLSearchParams(window.location.search);
   const status = params.get("fit");
-  if (!status) { return; }
+  if (!status) { return false; }
   history.replaceState(history.state, "", window.location.pathname);
   if (status === "connected") {
     state.fitConnected = true;
     toast("Google Fit connected");
     syncFit();
+    return true;
   } else if (status === "denied") {
     toast("Google Fit access was denied");
   } else {
     toast("Couldn't connect Google Fit");
   }
+  return false;
 }
 
-async function syncFit(days) {
+// `silent` suppresses toasts — used by the automatic sync on page open, which
+// runs every visit and shouldn't nag. Manual "Sync now" stays chatty.
+async function syncFit(days, silent) {
   if (state.fitSyncing) { return; }
   state.fitSyncing = true;
   render();
@@ -1936,9 +1933,9 @@ async function syncFit(days) {
     const res = await apiPost("/api/fit", days ? { days } : {});
     state.steps = res.steps || [];
     state.fitConnected = true;
-    toast("Steps synced");
+    if (!silent) { toast("Steps synced"); }
   } catch (e) {
-    toast("Couldn't sync steps");
+    if (!silent) { toast("Couldn't sync steps"); }
   } finally {
     state.fitSyncing = false;
     render();
@@ -3259,14 +3256,31 @@ function weeklyGoalBar(g) {
 }
 
 // Home "This week" block: weekly progress bars, or a prompt if none set.
+// Compact "steps today" pill, sized to sit inline on a section-head row (same
+// height as the goals header) rather than take a full card. Tapping opens the
+// Steps detail in Profile. Shows a dash until the first sync fills it in.
+function stepsChip() {
+  if (!state.fitConnected) { return ""; }
+  const s = todaySteps();
+  return `<button class="steps-chip${state.fitSyncing ? " syncing" : ""}" data-act="profile" aria-label="Steps today">
+    <span class="sc-ico">👟</span><span class="sc-val tnum">${s != null ? s.toLocaleString() : "–"}</span>
+  </button>`;
+}
+
 function weeklyGoalsSection() {
   const weekly = state.goals.filter((g) => g.kind === "weekly");
+  const chip = stepsChip();
   if (!weekly.length) {
-    return `<button class="goal-prompt" data-act="goals">🎯 Set a weekly goal <span class="gp-go">›</span></button>`;
+    // Still show the header row (with the steps chip) when there are no goals,
+    // so steps have a home; the prompt sits underneath.
+    const head = chip
+      ? `<div class="section-head"><span class="eyebrow">This week</span>${chip}</div>`
+      : "";
+    return `${head}<button class="goal-prompt" data-act="goals">🎯 Set a weekly goal <span class="gp-go">›</span></button>`;
   }
   return `<div class="section-head">
       <span class="eyebrow">This week</span>
-      <button class="back-btn" data-act="goals">Goals ›</button>
+      <div class="sh-right">${chip}<button class="back-btn" data-act="goals">Goals ›</button></div>
     </div>
     <div class="goal-list">${weekly.map(weeklyGoalBar).join("")}</div>`;
 }
@@ -3806,7 +3820,10 @@ async function boot() {
     state.loaded = true;
     render();
     if (state.view === "nutrition") { loadDayLog(); }
-    handleFitReturn();
+    // Auto-refresh steps on every open (silent). Skip if we just came back from
+    // the OAuth flow — handleFitReturn already triggered a (noisy) first sync.
+    const handledFit = handleFitReturn();
+    if (!handledFit && state.fitConnected) { syncFit(undefined, true); }
   } catch (e) {
     toast("Offline — showing cached view");
   }
@@ -3884,12 +3901,13 @@ function endDrag(commit) {
 document.addEventListener("pointerup", () => endDrag(true));
 document.addEventListener("pointercancel", () => endDrag(false));
 
-/* ---- Keep free-text fields visible above the fixed footer + keyboard ----
-   The finish/active footer is position:fixed and would otherwise sit over a
-   note as you type it. While a note/textarea is focused we tuck the footer
-   away and scroll the field into view. */
+/* ---- Keep the active-workout exercise note visible above the fixed footer ----
+   The "Finish workout" footer is position:fixed and sat over the per-exercise
+   note field as you typed it. While that field is focused we tuck the footer
+   away and scroll the field into view. Scoped to .ex-note only: full-screen
+   editors (note/finish/program) keep their footer — it holds their Save. */
 function isKbField(el) {
-  return !!el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.classList.contains("ex-note")));
+  return !!el && el.tagName === "INPUT" && el.classList.contains("ex-note");
 }
 document.addEventListener("focusin", (e) => {
   if (!isKbField(e.target)) { return; }

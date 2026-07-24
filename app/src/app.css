@@ -377,6 +377,19 @@
   }
   .goal-prompt .gp-go { color: var(--accent); font-size: 1.2rem; }
 
+  /* Compact "steps today" pill, sits inline on the "This week" section-head. */
+  .sh-right { display: flex; align-items: center; gap: 12px; }
+  .steps-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--line);
+    font-weight: 700; font-size: 0.85rem; color: var(--text);
+    line-height: 1;
+  }
+  .steps-chip .sc-ico { font-size: 0.95rem; }
+  .steps-chip:active { background: var(--surface-3); }
+  .steps-chip.syncing { opacity: 0.55; }
+
   .rpe-dot {
     width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
     display: grid; place-items: center; font-size: 0.78rem; font-weight: 800;
