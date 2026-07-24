@@ -478,7 +478,7 @@ function saveActiveAsTemplate() {
   go("tpledit");
 }
 
-function addExerciseToTemplate(id) {
+function addExerciseToTemplate(id, opts) {
   const ex = exById(id);
   const last = lastSetFor(id);
   state.templateEdit.entries.push({
@@ -487,6 +487,7 @@ function addExerciseToTemplate(id) {
     reps: last && last.reps != null ? last.reps : DEFAULT_STRENGTH_SET.reps,
     weight: ex.bodyweight ? null : (last && last.weight != null ? last.weight : DEFAULT_STRENGTH_SET.weight),
   });
+  if (opts && opts.back) { history.back(); return; }
   markPickerAdded(id);
   toast(`Added ${ex.name}`);
   render();   // stay in the picker so several exercises can be added in one trip
@@ -789,9 +790,12 @@ async function saveExercise() {
   state.picker.newTags = [];
   // Editing came from the active workout (pop back to it); creating adds the new
   // exercise to wherever the picker was opened from (active workout / template).
+  // Creating a new exercise is a one-shot: drop straight back into the
+  // workout/template with it added (the multi-add "stay open" applies to
+  // picking existing exercises, not to the create form).
   if (wasEditing) { history.back(); }
-  else if (target === "template") { addExerciseToTemplate(ex.id); }
-  else { addExerciseToActive(ex.id); }
+  else if (target === "template") { addExerciseToTemplate(ex.id, { back: true }); }
+  else { addExerciseToActive(ex.id, { back: true }); }
 }
 
 /* ---- Calendar ---- */

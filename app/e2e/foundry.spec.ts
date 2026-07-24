@@ -284,10 +284,13 @@ test('templates: build one and start a prefilled workout from it', async ({ page
 	// Back in the editor with the entry.
 	await expect(page.getByText('Overhead Press')).toBeVisible();
 
-	// Add a second exercise by PICKING the existing one from the library
-	// (regression: picking an existing exercise into a template used to do nothing).
+	// Add a second exercise by PICKING the existing one from the library.
+	// (Picking now keeps the picker open so several can be added in one trip;
+	// tapping shows a ✓ and "Done" returns to the editor.)
 	await page.getByRole('button', { name: /Add exercise/ }).click();
 	await page.locator('.ex-pick', { hasText: 'Overhead Press' }).click();
+	await expect(page.locator('.ex-pick', { hasText: 'Overhead Press' })).toHaveClass(/added/);
+	await page.getByRole('button', { name: /Done/ }).click();
 	await expect(page.locator('.ex-card')).toHaveCount(2);
 
 	await page.getByRole('button', { name: /Create template/ }).click();
