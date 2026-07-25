@@ -38,6 +38,7 @@ const SUGGESTED_MUSCLES = ["Chest", "Back", "Shoulders", "Arms", "Legs", "Glutes
 
 const SEED_ROUTINES = [
   { id: "gym",     name: "Gym",           icon: "\u{1F3CB}️", exerciseIds: [] },
+  { id: "home",    name: "Home Workout",  icon: "\u{1F3E0}",       exerciseIds: [] },
   { id: "bike",    name: "Bike",          icon: "\u{1F6B4}",       exerciseIds: ["bike"] },
   { id: "run",     name: "Run",           icon: "\u{1F3C3}",       exerciseIds: ["run"] },
   { id: "walk",    name: "Walk",          icon: "\u{1F6B6}",       exerciseIds: ["walk"] },
@@ -53,6 +54,7 @@ const SEED_ROUTINES = [
 // reserved for actions, never data.
 const TYPE_COLORS = {
   gym:     "#429C5A",  // green
+  home:    "#B85C9E",  // magenta
   bike:    "#4C88D3",  // blue
   bikeint: "#9372C8",  // violet
   run:     "#C8635D",  // red
