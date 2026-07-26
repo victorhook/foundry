@@ -3913,23 +3913,58 @@ function endDrag(commit) {
 document.addEventListener("pointerup", () => endDrag(true));
 document.addEventListener("pointercancel", () => endDrag(false));
 
-/* ---- Keep the active-workout exercise note visible above the fixed footer ----
-   The "Finish workout" footer is position:fixed and sat over the per-exercise
-   note field as you typed it. While that field is focused we tuck the footer
-   away and scroll the field into view. Scoped to .ex-note only: full-screen
-   editors (note/finish/program) keep their footer — it holds their Save. */
-function isKbField(el) {
-  return !!el && el.tagName === "INPUT" && el.classList.contains("ex-note");
+/* ---- Keyboard-aware layout (Android/iOS soft keyboard) ----
+   The on-screen keyboard shrinks the VISUAL viewport but not the LAYOUT
+   viewport, so a position:fixed footer hides behind the keyboard and any field
+   near the bottom (notes especially) gets covered with no room to scroll. We
+   track the keyboard height via the VisualViewport API, expose it as --kb (CSS
+   lifts the footer above the keyboard and pads the page), and manually scroll
+   the focused field into the band between the header and the keyboard. */
+const vp = typeof window !== "undefined" ? window.visualViewport : null;
+
+function isTextField(el) {
+  if (!el) { return false; }
+  if (el.tagName === "TEXTAREA") { return true; }
+  if (el.tagName !== "INPUT") { return false; }
+  return !["checkbox", "radio", "range", "button", "submit", "file", "color"].includes(el.type);
 }
+
+// Bring the focused field into view above the keyboard (+ lifted footer).
+// Manual (not scrollIntoView) so it's driven by the visual viewport height,
+// which is the part the keyboard actually eats into.
+function ensureFieldVisible(el) {
+  if (!vp || !isTextField(el)) { return; }
+  const r = el.getBoundingClientRect();
+  const footer = document.querySelector(".footer");
+  const footerH = footer && document.body.classList.contains("kb-open")
+    ? footer.getBoundingClientRect().height : 0;
+  const visibleTop = 64;                          // clear the sticky header
+  const visibleBottom = vp.height - footerH - 12; // clear keyboard + footer
+  if (r.bottom > visibleBottom) {
+    window.scrollBy({ top: r.bottom - visibleBottom, behavior: "smooth" });
+  } else if (r.top < visibleTop) {
+    window.scrollBy({ top: r.top - visibleTop, behavior: "smooth" });
+  }
+}
+
+function onKeyboardViewport() {
+  if (!vp) { return; }
+  const kb = Math.max(0, window.innerHeight - vp.height - vp.offsetTop);
+  const open = kb > 90; // ignore small URL-bar / toolbar collapses
+  document.documentElement.style.setProperty("--kb", kb + "px");
+  document.body.classList.toggle("kb-open", open);
+  if (open) { ensureFieldVisible(document.activeElement); }
+}
+if (vp) {
+  vp.addEventListener("resize", onKeyboardViewport);
+  vp.addEventListener("scroll", onKeyboardViewport);
+}
+// Switching fields while the keyboard is already up won't fire a viewport
+// resize — nudge the newly focused field into view too.
 document.addEventListener("focusin", (e) => {
-  if (!isKbField(e.target)) { return; }
-  document.body.classList.add("kb-editing");
-  // Let the on-screen keyboard animate in first, then centre the field.
-  setTimeout(() => { try { e.target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (err) { /* ignore */ } }, 250);
-});
-document.addEventListener("focusout", (e) => {
-  if (!isKbField(e.target) || isKbField(e.relatedTarget)) { return; }
-  document.body.classList.remove("kb-editing");
+  if (document.body.classList.contains("kb-open")) {
+    setTimeout(() => ensureFieldVisible(e.target), 60);
+  }
 });
 
 // Phone/browser Back button: SvelteKit updates $page.state on back/forward. We

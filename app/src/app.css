@@ -542,10 +542,13 @@
     padding: 14px var(--pad) calc(14px + env(safe-area-inset-bottom));
     background: linear-gradient(to top, var(--ground) 70%, transparent);
     z-index: 30; display: flex; gap: 10px;
-    transition: transform 0.2s ease, opacity 0.2s ease;
+    transition: bottom 0.18s ease;
   }
-  /* Typing a note/textarea: tuck the fixed footer away so the field is visible. */
-  body.kb-editing .footer { transform: translateY(130%); opacity: 0; pointer-events: none; }
+  /* Soft keyboard open: lift the fixed footer to sit just above the keyboard and
+     give the page room to scroll the focused field into view (--kb is the
+     keyboard height, set from the VisualViewport API). */
+  body.kb-open .footer { bottom: var(--kb, 0px); }
+  body.kb-open main { padding-bottom: calc(120px + var(--kb, 0px)); }
   .btn {
     flex: 1; padding: 16px; border-radius: 14px;
     font-weight: 800; font-size: 1rem; letter-spacing: -0.01em;
