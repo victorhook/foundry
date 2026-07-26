@@ -124,9 +124,15 @@ sudo cp /opt/foundry/deploy/foundry.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl restart foundry
 ```
 
-The updated `foundry.service` sets `HOME` and `PATH` for the CLI, and the updated
-`Caddyfile` gives the SSE stream a long timeout — copy both up if you're upgrading
-an existing install.
+The updated `foundry.service` sets `HOME` and `PATH` for the CLI — copy it up if
+you're upgrading an existing install.
+
+**Reverse proxy:** an agent turn streams for minutes, so the proxy must not buffer
+or time it out. On **nginx** (what `deploy/setup-nginx.sh` sets up, and what this
+VPS actually runs) this normally needs no change: the app sends
+`X-Accel-Buffering: no` and a 15s heartbeat, which cover nginx's response
+buffering and its 60s `proxy_read_timeout`. The `Caddyfile` settings are there for
+a Caddy-fronted install. See [`docs/ai-chat.md`](docs/ai-chat.md) for both.
 
 **Read [`docs/ai-chat.md`](docs/ai-chat.md) before enabling it.** The agent can run
 shell commands as the service user; the doc is explicit about where that boundary

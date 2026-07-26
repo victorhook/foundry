@@ -82,17 +82,43 @@ sudo cp /opt/foundry/deploy/foundry.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl restart foundry
 ```
 
-**4. Caddy needs a long timeout.** An agent turn can run for minutes. In
-`deploy/Caddyfile`:
+**4. Check the reverse proxy.** An agent turn can run for minutes and streams
+throughout, so the proxy must not buffer it or time it out.
 
-```
-reverse_proxy 127.0.0.1:3000 {
-	flush_interval -1          # don't buffer the SSE stream
-	transport http {
-		read_timeout 15m
-	}
+*This VPS runs **nginx***, not Caddy — `deploy/setup-nginx.sh` disables Caddy
+because the box also serves another site on :80/:443. **Usually nothing to do:**
+the app sends `X-Accel-Buffering: no` (which nginx honours per-response, so the
+stream isn't buffered) and a heartbeat every 15s (which keeps nginx's default 60s
+`proxy_read_timeout` from firing during a quiet turn). Try the chat first.
+
+If replies arrive all at once at the end, or long turns get cut off, make it
+explicit — add this **above** the `location /` block in
+`/etc/nginx/sites-available/foundry`, then `sudo nginx -t && sudo systemctl reload nginx`:
+
+```nginx
+location = /api/chat/stream {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 15m;
+    proxy_send_timeout 15m;
+    gzip off;
 }
 ```
+
+`setup-nginx.sh` now writes this block too, but it's a run-once script and
+certbot has since rewritten the live vhost — so edit the live file rather than
+re-running it.
+
+*If you ever move to Caddy* (`deploy/Caddyfile`, the generic path in `DEPLOY.md`),
+the equivalent settings are `flush_interval -1`, `read_timeout 15m`, and no gzip
+on `text/event-stream`. Caddy generally streams `text/event-stream` without
+buffering already, so treat those as making the intent explicit rather than as a
+known fix — verify against Caddy's current docs if you actually switch. Untested
+here: this box runs nginx.
 
 Verify from the phone: drawer → **AI chat** → *New chat*. If the page says the CLI
 isn't installed, `CLAUDE_BIN` is wrong or the CLI isn't on the service's `PATH`.
