@@ -105,6 +105,31 @@ describe('createTurnParser', () => {
 		expect(events).toEqual([{ type: 'error', message: 'Credit balance too low' }]);
 	});
 
+	// Observed shape of a real auth failure (bad CLAUDE_CODE_OAUTH_TOKEN): the CLI
+	// exits 0 and labels the line `subtype: "success"`, but sets is_error and puts
+	// the message in `result`. So `is_error` is the only trustworthy signal —
+	// keying off exit code or subtype would report a 401 as a normal reply.
+	it('treats is_error as authoritative even when subtype says success', () => {
+		const { events } = run([
+			JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				is_error: true,
+				api_error_status: 401,
+				terminal_reason: 'api_error',
+				session_id: 's1',
+				result: 'Failed to authenticate. API Error: 401 OAuth access token is invalid.'
+			})
+		]);
+		expect(events).toEqual([
+			{ type: 'session', sessionId: 's1' },
+			{
+				type: 'error',
+				message: 'Failed to authenticate. API Error: 401 OAuth access token is invalid.'
+			}
+		]);
+	});
+
 	it('reports stderr when the process dies before producing a result', () => {
 		const p = createTurnParser();
 		p.line(textDelta('half an answer'));
