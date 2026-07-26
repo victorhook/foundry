@@ -29,6 +29,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	event.locals.userId = userId;
+	event.locals.viaCookie = viaCookie;
 
 	// Rolling session: every authenticated *browser* request resets the 30-day
 	// window. Bearer (API) requests never get a cookie.

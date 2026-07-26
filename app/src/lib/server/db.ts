@@ -370,7 +370,28 @@ const migrations: Array<(d: Database.Database) => void> = [
 			day TEXT PRIMARY KEY,         -- YYYY-MM-DD (local calendar day)
 			steps INTEGER NOT NULL,
 			synced_at INTEGER NOT NULL
-		)`)
+		)`),
+	// v20 -> v21: AI chat. Each chat is a conversation with the `claude` CLI running
+	// on this server. The CLI owns the real conversation context (we resume it by
+	// `cli_session`); these tables exist so the phone can list past chats and
+	// re-render the transcript without asking the CLI to replay it.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS chat (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			cli_session TEXT,             -- CLI session UUID; NULL until the first turn completes
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS chat_message (
+			id TEXT PRIMARY KEY,
+			chat_id TEXT NOT NULL REFERENCES chat(id) ON DELETE CASCADE,
+			role TEXT NOT NULL,           -- 'user' | 'assistant'
+			text TEXT NOT NULL,
+			tools TEXT,                   -- assistant only: JSON [{name, detail}] of tools used this turn
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_chat_message_chat ON chat_message(chat_id, created_at)`)
 ];
 
 function migrate() {
@@ -745,6 +766,104 @@ export function updateNote(id: string, patch: { day?: string; text?: string }) {
 
 export function deleteNote(id: string) {
 	db.prepare('DELETE FROM note WHERE id = ?').run(id);
+}
+
+/* ---- AI chats (conversations with the local `claude` CLI) ---- */
+export type ChatTool = { name: string; detail: string };
+
+function parseTools(s: string | null): ChatTool[] {
+	if (!s) { return []; }
+	try {
+		const v = JSON.parse(s);
+		return Array.isArray(v) ? v : [];
+	} catch (e) {
+		return [];
+	}
+}
+
+/** Chats newest-first, without their messages (the list view). */
+export function getChats() {
+	return db
+		.prepare('SELECT id, title, cli_session, created_at, updated_at FROM chat ORDER BY updated_at DESC')
+		.all()
+		.map((r: any) => ({
+			id: r.id,
+			title: r.title,
+			hasSession: !!r.cli_session,
+			createdAt: r.created_at,
+			updatedAt: r.updated_at
+		}));
+}
+
+export function getChat(id: string) {
+	const c = db.prepare('SELECT id, title, cli_session, created_at, updated_at FROM chat WHERE id = ?').get(id) as any;
+	if (!c) { return null; }
+	const messages = db
+		.prepare('SELECT id, role, text, tools, created_at FROM chat_message WHERE chat_id = ? ORDER BY created_at, id')
+		.all(id)
+		.map((r: any) => ({
+			id: r.id,
+			role: r.role,
+			text: r.text,
+			tools: parseTools(r.tools),
+			createdAt: r.created_at
+		}));
+	return {
+		id: c.id,
+		title: c.title,
+		hasSession: !!c.cli_session,
+		createdAt: c.created_at,
+		updatedAt: c.updated_at,
+		messages
+	};
+}
+
+/** The CLI session UUID to resume, or null for a fresh conversation. */
+export function getChatCliSession(id: string): string | null {
+	const r = db.prepare('SELECT cli_session FROM chat WHERE id = ?').get(id) as any;
+	return r ? r.cli_session || null : null;
+}
+
+export function setChatCliSession(id: string, cliSession: string) {
+	db.prepare('UPDATE chat SET cli_session = ? WHERE id = ?').run(cliSession, id);
+}
+
+export function createChat(title?: string) {
+	const id = uid();
+	const now = Date.now();
+	db.prepare('INSERT INTO chat (id, title, cli_session, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)').run(
+		id,
+		(title || 'New chat').slice(0, 120),
+		now,
+		now
+	);
+	return getChat(id);
+}
+
+export function renameChat(id: string, title: string) {
+	db.prepare('UPDATE chat SET title = ? WHERE id = ?').run(title.slice(0, 120), id);
+	return getChat(id);
+}
+
+export function deleteChat(id: string) {
+	db.prepare('DELETE FROM chat WHERE id = ?').run(id);
+}
+
+export function addChatMessage(
+	chatId: string,
+	role: 'user' | 'assistant',
+	text: string,
+	tools?: ChatTool[]
+) {
+	const id = uid();
+	const now = Date.now();
+	db.transaction(() => {
+		db.prepare(
+			'INSERT INTO chat_message (id, chat_id, role, text, tools, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+		).run(id, chatId, role, text, tools && tools.length ? JSON.stringify(tools) : null, now);
+		db.prepare('UPDATE chat SET updated_at = ? WHERE id = ?').run(now, chatId);
+	})();
+	return id;
 }
 
 /* ---- Goals (weekly targets + open-ended generic goals) ---- */

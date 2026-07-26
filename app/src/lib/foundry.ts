@@ -106,6 +106,15 @@ function load() {
     dayLog: null,
     photoTag: null,
     loaded: false,
+    // AI chat. `chats` is the list; `chat` is the open transcript; `chatStream`
+    // is the in-flight assistant turn (patched into the DOM, never via render()).
+    chats: [],
+    chatsLoaded: false,
+    chatAvailable: true,
+    chat: null,
+    chatDraft: "",
+    chatStream: null,
+    chatError: null,
   };
 }
 
@@ -891,6 +900,9 @@ function stopDictation() { if (recognizing && recog) { try { recog.stop(); } cat
 function go(view) {
   const changed = view !== state.view;
   stopDictation();
+  // Leaving a chat mid-reply cancels the turn on the server too (the SSE stream
+  // closing kills the CLI child); whatever streamed so far is already saved.
+  if (state.view === "chat" && view !== "chat") { stopChat(); }
   state.view = view;
   closeDrawer();
   save();
@@ -941,6 +953,8 @@ function render() {
   else if (state.view === "goals") { html = viewGoals(); }
   else if (state.view === "goaledit") { html = viewGoalEdit(); }
   else if (state.view === "exinfo") { html = viewExInfo(); }
+  else if (state.view === "chats") { html = viewChats(); }
+  else if (state.view === "chat") { html = viewChat(); }
   app.innerHTML = html + overlays();
   // Play the entrance animation only when the view actually changes, so
   // in-place updates (adding a set, toggling pain) don't re-animate everything.
@@ -950,6 +964,7 @@ function render() {
   }
   if (state.view === "profile") { drawWeightChart(); }
   if (state.view === "program") { renderProgramPdf(); }
+  if (state.view === "chat") { chatAfterRender(); }
 }
 
 function header(opts) {
@@ -985,6 +1000,7 @@ function buildDrawer() {
     <nav class="drawer-panel">
       <div class="drawer-head eyebrow">Foundry</div>
       ${item("home", "\u{1F3E0}", "Home")}
+      ${item("chats", "\u{1F4AC}", "AI chat")}
       ${item("goals", "\u{1F3AF}", "Goals")}
       ${item("nutrition", "\u{1F34E}", "Nutrition")}
       ${item("history", "\u{1F4D6}", "History")}
@@ -1011,6 +1027,7 @@ function buildDrawer() {
     else if (nav === "goals") { openGoals(); }
     else if (nav === "programs") { openPrograms(); }
     else if (nav === "notes") { openNotes(); }
+    else if (nav === "chats") { openChats(); }
     else if (nav === "photos") { state.photoTag = null; go("photos"); }
     else { go(nav); }
   });
@@ -3217,6 +3234,343 @@ function viewNoteEdit() {
   </div>`;
 }
 
+/* ---- AI chat (talks to the `claude` CLI running on the server) ---- */
+// The transcript lives on the server; the client keeps only the open chat. A
+// streaming turn is patched straight into the DOM rather than going through
+// render(), so growing text never steals focus from the composer.
+
+let chatAbort = null;
+
+async function loadChats() {
+  try {
+    const data = await apiGet("/api/chat");
+    state.chats = data.chats || [];
+    state.chatAvailable = data.available !== false;
+    state.chatsLoaded = true;
+    if (state.view === "chats") { render(); }
+  } catch (e) {
+    toast("Couldn't load chats");
+  }
+}
+
+function openChats() {
+  go("chats");
+  loadChats();
+}
+
+async function newChat() {
+  let chat;
+  try {
+    chat = await apiPost("/api/chat", {});
+  } catch (e) { toast("Couldn't start a chat"); return; }
+  state.chats.unshift({ id: chat.id, title: chat.title, hasSession: false, createdAt: chat.createdAt, updatedAt: chat.updatedAt });
+  state.chat = chat;
+  state.chatDraft = "";
+  state.chatStream = null;
+  state.chatError = null;
+  go("chat");
+}
+
+async function openChat(id) {
+  // Paint the shell from the list entry so the transition isn't a blank screen.
+  const meta = state.chats.find((c) => c.id === id);
+  state.chat = { id, title: meta ? meta.title : "Chat", messages: [] };
+  state.chatDraft = "";
+  state.chatStream = null;
+  state.chatError = null;
+  go("chat");
+  try {
+    const chat = await apiGet("/api/chat?id=" + encodeURIComponent(id));
+    if (state.chat && state.chat.id === id) {
+      state.chat = chat;
+      render();
+    }
+  } catch (e) {
+    toast("Couldn't load that chat");
+  }
+}
+
+function deleteChatById(id) {
+  apiDelete("/api/chat", { id }).catch(() => {});
+  state.chats = state.chats.filter((c) => c.id !== id);
+  if (state.chat && state.chat.id === id) { state.chat = null; }
+  stopChat();
+  go("chats");
+}
+
+function stopChat() {
+  if (chatAbort) { chatAbort.abort(); chatAbort = null; }
+}
+
+async function sendChat() {
+  const text = (state.chatDraft || "").trim();
+  if (!text || !state.chat || state.chatStream) { return; }
+  const chatId = state.chat.id;
+  // The server titles a fresh chat from its first message; mirror that here so
+  // the header updates immediately instead of after the next list refresh.
+  if (!state.chat.messages.length && state.chat.title === "New chat") {
+    const line = text.split("\n")[0].trim();
+    state.chat.title = (line.length > 60 ? line.slice(0, 57) + "…" : line) || "New chat";
+    const meta = state.chats.find((x) => x.id === chatId);
+    if (meta) { meta.title = state.chat.title; meta.hasSession = true; }
+  }
+  state.chat.messages.push({ id: "local-" + uid(), role: "user", text, tools: [], createdAt: Date.now() });
+  state.chatDraft = "";
+  state.chatStream = { text: "", tools: [] };
+  state.chatError = null;
+  render();
+
+  chatAbort = new AbortController();
+  let sawEnd = false;
+  try {
+    const r = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chatId, text }),
+      signal: chatAbort.signal,
+    });
+    if (!r.ok || !r.body) {
+      throw new Error(r.status === 409 ? "That chat is already replying." : "The server said " + r.status + ".");
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) { break; }
+      buf += dec.decode(value, { stream: true });
+      // SSE frames are separated by a blank line; ": ping" comments are skipped.
+      let sep;
+      while ((sep = buf.indexOf("\n\n")) !== -1) {
+        const frame = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        for (const line of frame.split("\n")) {
+          if (!line.startsWith("data:")) { continue; }
+          let ev;
+          try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+          if (ev.type === "delta") { onChatDelta(ev.text); }
+          else if (ev.type === "tool") { onChatTool(ev); }
+          else if (ev.type === "done") { sawEnd = true; finishChatTurn(ev.text, ev.tools || []); }
+          else if (ev.type === "error") { sawEnd = true; failChatTurn(ev.message); }
+        }
+      }
+    }
+    if (!sawEnd) { failChatTurn("The connection dropped before the reply finished."); }
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      // User pressed Stop (or left the view). Keep whatever arrived.
+      finishChatTurn((state.chatStream && state.chatStream.text) || "", (state.chatStream && state.chatStream.tools) || [], true);
+    } else if (!sawEnd) {
+      failChatTurn(String((e && e.message) || e));
+    }
+  } finally {
+    chatAbort = null;
+  }
+}
+
+// --- live DOM patching for the in-flight turn ---
+function chatStreamEl() { return document.querySelector(".chat-live .chat-md"); }
+
+function onChatDelta(text) {
+  if (!state.chatStream) { return; }
+  state.chatStream.text += text;
+  const el = chatStreamEl();
+  if (el) {
+    // Plain text while streaming — partial markdown renders as garbage. The
+    // finished message is re-rendered as markdown below.
+    el.textContent = state.chatStream.text;
+    chatScrollToEnd();
+  }
+}
+
+function onChatTool(ev) {
+  if (!state.chatStream) { return; }
+  state.chatStream.tools.push({ name: ev.name, detail: ev.detail });
+  const host = document.querySelector(".chat-live .chat-tools");
+  if (host) {
+    host.innerHTML = toolChips(state.chatStream.tools);
+    chatScrollToEnd();
+  }
+}
+
+function finishChatTurn(text, tools, stopped) {
+  const body = (text || "").trim();
+  if (state.chat) {
+    if (body) {
+      state.chat.messages.push({ id: "local-" + uid(), role: "assistant", text: body, tools: tools || [], createdAt: Date.now() });
+    }
+    const meta = state.chats.find((c) => c.id === state.chat.id);
+    if (meta) {
+      meta.updatedAt = Date.now();
+      state.chats.sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+  }
+  state.chatStream = null;
+  render();
+  if (stopped) { toast("Stopped"); }
+}
+
+function failChatTurn(message) {
+  const partial = (state.chatStream && state.chatStream.text) || "";
+  const tools = (state.chatStream && state.chatStream.tools) || [];
+  if (state.chat && partial.trim()) {
+    state.chat.messages.push({ id: "local-" + uid(), role: "assistant", text: partial, tools, createdAt: Date.now() });
+  }
+  state.chatStream = null;
+  // Shown in the transcript, not just a toast: a setup problem ("claude: not
+  // found", "not authenticated") is the one error you actually need to read,
+  // and a toast is gone in under two seconds.
+  state.chatError = message || "The agent run failed.";
+  render();
+}
+
+function chatScrollToEnd() {
+  const sc = document.querySelector(".chat-scroll");
+  if (sc) { sc.scrollTop = sc.scrollHeight; }
+}
+
+// Called from render() after the chat view paints.
+function chatAfterRender() {
+  chatScrollToEnd();
+  const ta = document.querySelector('[data-act="chat-input"]');
+  if (ta) { autoGrow(ta); }
+}
+
+function autoGrow(ta) {
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
+}
+
+/* --- minimal markdown → HTML (escape first, then a few safe patterns) --- */
+function inlineMd(s) {
+  return escAttr(s)
+    .replace(/`([^`]+)`/g, (m, c) => `<code>${c}</code>`)
+    .replace(/\*\*([^*]+)\*\*/g, (m, c) => `<strong>${c}</strong>`);
+}
+
+function mdToHtml(text) {
+  const out = [];
+  // Split on fenced code blocks so their contents are never treated as markup.
+  const parts = String(text).split(/```/);
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) {
+      // Odd segments are inside fences; drop an optional language tag line.
+      const body = part.replace(/^[a-zA-Z0-9_+-]*\n/, "");
+      out.push(`<pre><code>${escAttr(body.replace(/\n$/, ""))}</code></pre>`);
+      return;
+    }
+    for (const block of part.split(/\n{2,}/)) {
+      const trimmed = block.trim();
+      if (!trimmed) { continue; }
+      const lines = trimmed.split("\n");
+      if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
+        out.push(`<ul>${lines.map((l) => `<li>${inlineMd(l.replace(/^\s*[-*]\s+/, ""))}</li>`).join("")}</ul>`);
+      } else if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
+        out.push(`<ol>${lines.map((l) => `<li>${inlineMd(l.replace(/^\s*\d+[.)]\s+/, ""))}</li>`).join("")}</ol>`);
+      } else {
+        out.push(`<p>${lines.map(inlineMd).join("<br>")}</p>`);
+      }
+    }
+  });
+  return out.join("");
+}
+
+const TOOL_ICONS = {
+  Bash: "\u{1F4BB}", Read: "\u{1F4C4}", Write: "\u{270F}\u{FE0F}", Edit: "\u{270F}\u{FE0F}",
+  Glob: "\u{1F50D}", Grep: "\u{1F50D}", WebSearch: "\u{1F310}", WebFetch: "\u{1F310}", TodoWrite: "\u{2705}",
+};
+
+function toolChips(tools) {
+  if (!tools || !tools.length) { return ""; }
+  return tools.map((t) => {
+    const ico = TOOL_ICONS[t.name] || "\u{1F527}";
+    const detail = t.detail ? `<span class="chip-detail">${escAttr(t.detail.length > 70 ? t.detail.slice(0, 67) + "…" : t.detail)}</span>` : "";
+    return `<div class="tool-chip">${ico} <span class="chip-name">${escAttr(t.name)}</span>${detail}</div>`;
+  }).join("");
+}
+
+function viewChats() {
+  // A chat only gets a real title from its first message, so one that was
+  // opened and abandoned reads as "Untitled" rather than echoing the button.
+  const cards = state.chats.map((c) => `<button class="note-card" data-act="open-chat" data-id="${c.id}">
+    <div class="note-date">${fmtDate(c.updatedAt)}</div>
+    <div class="note-text">${c.hasSession ? escAttr(c.title) : "Untitled chat"}</div>
+  </button>`).join("");
+  let body;
+  if (!state.chatAvailable) {
+    body = `<div class="empty">The <code>claude</code> CLI isn't installed on the server yet. See docs/ai-chat.md for the setup steps.</div>`;
+  } else if (!state.chatsLoaded) {
+    body = `<div class="empty">Loading…</div>`;
+  } else if (!state.chats.length) {
+    body = `<div class="empty">No chats yet. Start one — it's a full agent with a scratch workspace on the server.</div>`;
+  } else {
+    body = `<div class="note-list">${cards}</div>`;
+  }
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Home" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">AI chat</span></div>
+      ${body}
+      <button class="add-ex-btn" data-act="new-chat" style="margin-top:14px;">＋  New chat</button>
+    </main>
+  </div>`;
+}
+
+function viewChat() {
+  const c = state.chat;
+  if (!c) { go("chats"); return ""; }
+  const bubbles = c.messages.map((m) => {
+    if (m.role === "user") {
+      return `<div class="chat-row user"><div class="chat-bubble">${mdToHtml(m.text)}</div></div>`;
+    }
+    return `<div class="chat-row bot">
+      <div class="chat-bubble">
+        ${m.tools && m.tools.length ? `<div class="chat-tools">${toolChips(m.tools)}</div>` : ""}
+        <div class="chat-md">${mdToHtml(m.text)}</div>
+      </div>
+    </div>`;
+  }).join("");
+
+  const live = state.chatStream
+    ? `<div class="chat-row bot chat-live">
+        <div class="chat-bubble">
+          <div class="chat-tools">${toolChips(state.chatStream.tools)}</div>
+          <div class="chat-md">${escAttr(state.chatStream.text)}</div>
+          <div class="chat-typing"><span></span><span></span><span></span></div>
+        </div>
+      </div>`
+    : "";
+
+  const empty = !c.messages.length && !state.chatStream && !state.chatError
+    ? `<div class="empty">Ask anything. It can run commands, read and write files in its own workspace, and search the web.</div>`
+    : "";
+
+  const failure = state.chatError
+    ? `<div class="chat-row bot"><div class="chat-bubble chat-err">
+        <div class="chat-err-head">Couldn't finish that turn</div>
+        <div class="chat-err-body">${escAttr(state.chatError)}</div>
+      </div></div>`
+    : "";
+
+  return `<div class="app chat-app">
+    ${header({ back: true, backLabel: "Chats", action: `<button class="iconbtn" data-act="del-chat" data-id="${c.id}" aria-label="Delete chat">\u{1F5D1}\u{FE0F}</button>` })}
+    <main class="chat-scroll">
+      <div class="chat-title">${escAttr(c.title)}</div>
+      ${empty}
+      ${bubbles}
+      ${live}
+      ${failure}
+    </main>
+    <div class="chat-composer">
+      <textarea class="chat-input" rows="1" data-act="chat-input" placeholder="Message…"
+        ${state.chatStream ? "disabled" : ""}>${escAttr(state.chatDraft || "")}</textarea>
+      ${state.chatStream
+        ? `<button class="chat-send stop" data-act="chat-stop" aria-label="Stop">■</button>`
+        : `<button class="chat-send" data-act="chat-send" aria-label="Send">↑</button>`}
+    </div>
+  </div>`;
+}
+
 /* ---- Goals (weekly targets with a progress bar + open-ended generic goals) ---- */
 
 // Monday-00:00 of the week containing ts (local time), as a timestamp — used to
@@ -3443,6 +3797,21 @@ app.addEventListener("click", (e) => {
       break;
     case "confirm-ok": { const c = state.confirm; state.confirm = null; if (c && c.onOk) { c.onOk(); } else { render(); } break; }
     case "confirm-cancel": state.confirm = null; render(); break;
+    case "new-chat": newChat(); break;
+    case "open-chat": openChat(t.dataset.id); break;
+    case "chat-send": sendChat(); break;
+    case "chat-stop": stopChat(); break;
+    case "del-chat": {
+      const id = t.dataset.id;
+      state.confirm = {
+        title: "Delete chat?",
+        body: "The transcript is removed from Foundry. Anything the agent wrote in its workspace stays.",
+        ok: "Delete", danger: true,
+        onOk: () => deleteChatById(id),
+      };
+      render();
+      break;
+    }
     case "history": go("history"); break;
     case "home": go("home"); break;
     case "active": go("active"); break;
@@ -3736,6 +4105,7 @@ app.addEventListener("input", (e) => {
       return list.map((n) => `<button class="note-card" data-act="edit-note" data-id="${n.id}"><div class="note-date">${fmtDay(n.day)}</div><div class="note-text">${escAttr(n.text)}</div></button>`).join("");
     });
   }
+  else if (act === "chat-input") { state.chatDraft = t.value; autoGrow(t); }
   else if (act === "note-date") { state.noteEdit.day = t.value; }
   else if (act === "note-text") { state.noteEdit.text = t.value; }
   else if (act === "wdate" && t.value) {
@@ -3794,8 +4164,8 @@ function updatePickerList() {
 }
 
 /* ============ Boot ============ */
-const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit", "notes", "noteedit", "exinfo", "goals", "goaledit"];
-const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program", "noteedit", "exinfo", "goaledit"];  // depend on non-persisted state
+const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit", "notes", "noteedit", "exinfo", "goals", "goaledit", "chats", "chat"];
+const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program", "noteedit", "exinfo", "goaledit", "chat"];  // depend on non-persisted state
 async function boot() {
   buildDrawer();
   buildPtr();
@@ -3832,6 +4202,7 @@ async function boot() {
     state.loaded = true;
     render();
     if (state.view === "nutrition") { loadDayLog(); }
+    if (state.view === "chats") { loadChats(); }
     // Auto-refresh steps on every open (silent). Skip if we just came back from
     // the OAuth flow — handleFitReturn already triggered a (noisy) first sync.
     const handledFit = handleFitReturn();

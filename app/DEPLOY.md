@@ -108,6 +108,30 @@ sudo -u foundry DATABASE_PATH=/opt/foundry/data/foundry.db \
 Sessions are stateless, so a password change takes effect immediately (existing
 sessions keep working until they expire; restart the service to invalidate them).
 
+## AI chat (optional)
+
+The **AI chat** page runs the `claude` CLI on this server and streams its replies
+to your phone. It's opt-in: with the CLI absent, the page just says so.
+
+Short version — SSH in as the user the service runs as (`User=` in
+`deploy/foundry.service`), install the CLI, mint a subscription token, restart:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash   # no sudo: installs to ~/.local/bin
+claude setup-token                               # follow the URL; prints a token
+echo 'CLAUDE_CODE_OAUTH_TOKEN=<the token>' | sudo tee -a /opt/foundry/.env
+sudo cp /opt/foundry/deploy/foundry.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl restart foundry
+```
+
+The updated `foundry.service` sets `HOME` and `PATH` for the CLI, and the updated
+`Caddyfile` gives the SSE stream a long timeout — copy both up if you're upgrading
+an existing install.
+
+**Read [`docs/ai-chat.md`](docs/ai-chat.md) before enabling it.** The agent can run
+shell commands as the service user; the doc is explicit about where that boundary
+actually is and how to tighten it.
+
 ## Google Fit steps (optional)
 
 Foundry can pull your daily step count from Google Fit via its REST API. It's

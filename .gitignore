@@ -25,3 +25,6 @@ foundry-deploy.pub
 # Local production-build test scratch (server + tesseract cache)
 app/.prod*
 app/.e2e-data
+
+# AI chat agent scratch workspace (server-side working dir; never committed)
+app/ai-workspace/

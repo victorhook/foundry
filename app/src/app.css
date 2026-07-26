@@ -979,6 +979,132 @@
   }
   .mic-btn.recording { background: var(--hot); color: #14171C; border-color: transparent; animation: pulse 1.4s infinite; }
 
+  /* ---------- AI chat ---------- */
+  /* The chat page owns its own scroll (transcript scrolls, composer is pinned)
+     rather than scrolling the window, so new text can't push the input off
+     screen. Shrinking by --kb keeps the composer above the soft keyboard. */
+  .chat-app {
+    height: 100dvh;
+    max-height: 100dvh;
+    height: calc(100dvh - var(--kb, 0px));
+    max-height: calc(100dvh - var(--kb, 0px));
+    overflow: hidden;
+  }
+  .chat-scroll {
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: var(--pad); padding-bottom: 8px;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .chat-scroll::-webkit-scrollbar { display: none; }
+  .chat-title {
+    font-size: 0.8rem; font-weight: 600; color: var(--muted);
+    margin: 0 2px 16px; text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .chat-row { display: flex; margin-bottom: 12px; }
+  .chat-row.user { justify-content: flex-end; }
+  .chat-row.bot { justify-content: flex-start; }
+  .chat-bubble {
+    max-width: 86%; padding: 11px 14px; border-radius: 16px;
+    line-height: 1.5; font-size: 0.95rem;
+    overflow-wrap: anywhere;
+  }
+  .chat-row.user .chat-bubble {
+    background: var(--accent); color: #14171C; font-weight: 600;
+    border-bottom-right-radius: 5px;
+  }
+  .chat-row.bot .chat-bubble {
+    background: var(--surface); border: 1px solid var(--line);
+    border-bottom-left-radius: 5px;
+  }
+  /* Markdown inside a reply: tighten the default block margins so a short
+     answer doesn't get a bubble twice the size of its text. */
+  .chat-md > :first-child { margin-top: 0; }
+  .chat-md > :last-child { margin-bottom: 0; }
+  .chat-md p { margin: 0 0 9px; }
+  .chat-md ul, .chat-md ol { margin: 0 0 9px; padding-left: 20px; }
+  .chat-md li { margin-bottom: 4px; }
+  .chat-md code {
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 5px;
+    font-size: 0.86em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .chat-md pre {
+    background: var(--ground); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 11px 12px;
+    margin: 0 0 9px; overflow-x: auto;
+  }
+  .chat-md pre code { background: none; border: none; padding: 0; font-size: 0.82rem; }
+
+  /* One chip per tool call, above the reply text — a visible trace of what the
+     agent actually did on the box. */
+  .chat-tools { display: flex; flex-direction: column; gap: 5px; }
+  .chat-tools:not(:empty) { margin-bottom: 10px; }
+  .tool-chip {
+    display: flex; align-items: baseline; gap: 6px;
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 999px; padding: 4px 11px;
+    font-size: 0.76rem; color: var(--muted);
+    max-width: 100%;
+  }
+  .tool-chip .chip-name { font-weight: 700; color: var(--text); flex: 0 0 auto; }
+  .tool-chip .chip-detail {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* A turn that failed — stays in the transcript so a setup error is readable
+     (and copyable) instead of vanishing with a toast. */
+  .chat-bubble.chat-err {
+    background: color-mix(in srgb, var(--hot) 14%, var(--surface));
+    border-color: color-mix(in srgb, var(--hot) 45%, transparent);
+  }
+  .chat-err-head { font-weight: 700; color: var(--hot); margin-bottom: 5px; font-size: 0.88rem; }
+  .chat-err-body {
+    font-size: 0.84rem; color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+    -webkit-user-select: text; user-select: text;
+  }
+
+  /* Three-dot "thinking" pulse, shown while a turn is streaming. */
+  .chat-typing { display: flex; gap: 4px; padding-top: 7px; }
+  .chat-typing span {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--muted-2);
+    animation: chatdot 1.2s ease-in-out infinite;
+  }
+  .chat-typing span:nth-child(2) { animation-delay: 0.15s; }
+  .chat-typing span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes chatdot {
+    0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+    30% { opacity: 1; transform: translateY(-3px); }
+  }
+
+  .chat-composer {
+    flex: 0 0 auto; display: flex; gap: 9px; align-items: flex-end;
+    padding: 10px var(--pad) calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line); background: var(--ground);
+  }
+  body.kb-open .chat-composer { padding-bottom: 10px; }
+  .chat-input {
+    flex: 1; resize: none; overflow-y: auto;
+    min-height: var(--tap); max-height: 140px;
+    padding: 12px 14px; border-radius: 20px;
+    background: var(--surface); border: 1px solid var(--line);
+    color: var(--text); font-size: 0.95rem; line-height: 1.4;
+  }
+  .chat-input:disabled { opacity: 0.55; }
+  .chat-send {
+    flex: 0 0 auto; width: var(--tap); height: var(--tap);
+    border-radius: 50%; background: var(--accent); color: #14171C;
+    font-size: 1.15rem; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .chat-send:active { background: var(--accent-press); }
+  .chat-send.stop { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); font-size: 0.8rem; }
+
   /* ---------- Exercise info ---------- */
   .exinfo-img { width: 100%; max-height: 300px; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface-2); display: block; }
   .exinfo-img-empty { display: grid; place-items: center; height: 180px; font-size: 3rem; opacity: 0.4; }

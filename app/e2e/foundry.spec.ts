@@ -578,3 +578,39 @@ test('weekly goal tracks progress on home; generic goal toggles done', async ({ 
 	await page.reload();
 	await expect(page.locator('.goal-row', { hasText: 'Bench press' })).toHaveClass(/done/);
 });
+
+// AI chat: the page, the chat lifecycle, and persistence. Deliberately does NOT
+// send a message — that would spawn the real `claude` CLI and spend API credits
+// on every test run. The CLI bridge itself is covered by claude.test.ts.
+test('AI chat: create, persist and delete a chat', async ({ page }) => {
+	await login(page);
+	await menuNav(page, 'AI chat');
+	await expect(page.locator('.empty')).toContainText('No chats yet');
+
+	// New chat lands on the transcript view with an empty composer.
+	await page.locator('[data-act="new-chat"]').click();
+	await expect(page.locator('.chat-input')).toBeVisible();
+	await expect(page.locator('.chat-send')).toBeVisible();
+	await expect(page.locator('.empty')).toContainText('Ask anything');
+
+	// The draft survives typing without the view re-rendering under the cursor.
+	await page.locator('.chat-input').fill('How is my bench progressing?');
+	await expect(page.locator('.chat-input')).toHaveValue('How is my bench progressing?');
+
+	// Back to the list: the chat is there, saved server-side. It has no messages
+	// yet, so it reads as "Untitled chat" rather than echoing the button label.
+	await page.locator('.back-btn').click();
+	await expect(page.locator('.note-card')).toHaveCount(1);
+	await expect(page.locator('.note-card')).toContainText('Untitled chat');
+	await page.reload();
+	await expect(page.locator('[data-act="new-chat"]')).toBeVisible();
+	await expect(page.locator('.note-card')).toHaveCount(1);
+
+	// Delete it (confirmation modal) → back to the empty state, and it stays gone.
+	await page.locator('.note-card').first().click();
+	await page.locator('[data-act="del-chat"]').click();
+	await page.locator('[data-act="confirm-ok"]').click();
+	await expect(page.locator('.empty')).toContainText('No chats yet');
+	await page.reload();
+	await expect(page.locator('.empty')).toContainText('No chats yet');
+});

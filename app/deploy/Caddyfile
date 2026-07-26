@@ -3,6 +3,19 @@
 # Caddy automatically obtains + renews a Let's Encrypt certificate.
 
 fitness.yourdomain.com {
-	encode gzip
-	reverse_proxy 127.0.0.1:3000
+	# Don't gzip event streams — buffering a compressed stream defeats the point
+	# of streaming the AI chat's replies token by token.
+	encode gzip {
+		match {
+			not header Content-Type text/event-stream*
+		}
+	}
+	reverse_proxy 127.0.0.1:3000 {
+		# The AI chat streams over SSE and an agent turn can run for minutes:
+		# flush every write straight through, and don't time the response out.
+		flush_interval -1
+		transport http {
+			read_timeout 15m
+		}
+	}
 }
