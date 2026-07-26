@@ -1,5 +1,70 @@
-import { describe, it, expect } from 'vitest';
-import { createTurnParser } from './claude';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createTurnParser, findBin } from './claude';
+
+// Locating the CLI. The production failure this guards against: the official
+// installer puts `claude` in ~/.local/bin, which a systemd unit's default PATH
+// does not include — so PATH-only lookup finds nothing on a correctly installed
+// server and the chat page reports "not installed".
+describe('findBin', () => {
+	let root: string;
+	let onPathDir: string;
+	let home: string;
+
+	beforeAll(() => {
+		root = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-findbin-'));
+		onPathDir = path.join(root, 'usr-bin');
+		home = path.join(root, 'home');
+		fs.mkdirSync(onPathDir, { recursive: true });
+		fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+	});
+	afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+	const install = (dir: string) => {
+		const p = path.join(dir, 'claude');
+		fs.writeFileSync(p, '#!/bin/sh\n', { mode: 0o755 });
+		return p;
+	};
+	const uninstall = (dir: string) => fs.rmSync(path.join(dir, 'claude'), { force: true });
+
+	it('honours an explicit CLAUDE_BIN without probing anything', () => {
+		expect(findBin({ explicit: '/custom/claude', pathEnv: onPathDir, home })).toBe('/custom/claude');
+	});
+
+	it('finds it on PATH when it is there', () => {
+		const p = install(onPathDir);
+		expect(findBin({ pathEnv: onPathDir, home })).toBe(p);
+		uninstall(onPathDir);
+	});
+
+	it('falls back to $HOME/.local/bin when PATH does not include it', () => {
+		const p = install(path.join(home, '.local', 'bin'));
+		// A systemd unit's default PATH — no per-user bin directory.
+		expect(findBin({ pathEnv: '/usr/local/bin:/usr/bin:/bin', home })).toBe(p);
+		uninstall(path.join(home, '.local', 'bin'));
+	});
+
+	it('prefers PATH over the per-user location when both exist', () => {
+		const onPath = install(onPathDir);
+		install(path.join(home, '.local', 'bin'));
+		expect(findBin({ pathEnv: onPathDir, home })).toBe(onPath);
+		uninstall(onPathDir);
+		uninstall(path.join(home, '.local', 'bin'));
+	});
+
+	it('returns the bare name when nothing is runnable, so the error stays useful', () => {
+		expect(findBin({ pathEnv: onPathDir, home })).toBe('claude');
+	});
+
+	it('ignores a non-executable file of the right name', () => {
+		const p = path.join(onPathDir, 'claude');
+		fs.writeFileSync(p, 'not executable', { mode: 0o644 });
+		expect(findBin({ pathEnv: onPathDir, home })).toBe('claude');
+		fs.rmSync(p, { force: true });
+	});
+});
 
 // Fixtures are trimmed copies of real `claude -p --output-format stream-json`
 // output, so this locks in the wire shapes the parser depends on.

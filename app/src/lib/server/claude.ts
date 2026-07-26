@@ -14,9 +14,40 @@ import type { ChatTool } from './db';
 // nobody is watching. See docs/ai-chat.md for what that does and does not
 // contain.
 
-const BIN = env.CLAUDE_BIN || 'claude';
 const WORKSPACE = path.resolve(env.AI_WORKSPACE || 'ai-workspace');
 const TURN_TIMEOUT_MS = Number(env.CLAUDE_TURN_TIMEOUT_MS || 10 * 60 * 1000);
+
+const HOME = env.CLAUDE_HOME || process.env.HOME || WORKSPACE;
+
+function executable(p: string): boolean {
+	try {
+		fs.accessSync(p, fs.constants.X_OK);
+		return true;
+	} catch (e) {
+		return false;
+	}
+}
+
+/**
+ * Where the CLI actually is. Explicit CLAUDE_BIN wins; otherwise look on PATH and
+ * then in the per-user install location, because that's where the official
+ * installer puts it (`~/.local/bin`) and a systemd unit's default PATH does not
+ * include it. Returns the bare name when nothing is runnable, so the ENOENT
+ * error message stays useful — and so claudeAvailable() can report "not set up".
+ */
+export function findBin(opts: { explicit?: string; pathEnv?: string; home: string }): string {
+	if (opts.explicit) { return opts.explicit; }
+	const onPath = (opts.pathEnv || '')
+		.split(path.delimiter)
+		.filter(Boolean)
+		.map((d) => path.join(d, 'claude'))
+		.find(executable);
+	if (onPath) { return onPath; }
+	const perUser = path.join(opts.home, '.local', 'bin', 'claude');
+	return executable(perUser) ? perUser : 'claude';
+}
+
+const BIN = findBin({ explicit: env.CLAUDE_BIN, pathEnv: process.env.PATH, home: HOME });
 
 // Tools the chat agent may use. Deliberately excludes Task (subagents would
 // multiply cost invisibly) and the git/PR helpers — this is a chat, not CI.
@@ -75,18 +106,8 @@ export type ClaudeEvent =
  * still ends in a clear error on the first turn (see the ENOENT branch below).
  */
 export function claudeAvailable(): boolean {
-	const executable = (p: string) => {
-		try {
-			fs.accessSync(p, fs.constants.X_OK);
-			return true;
-		} catch (e) {
-			return false;
-		}
-	};
-	if (BIN.includes('/')) { return executable(BIN); }
-	// Bare name: spawn would resolve it from PATH, so look there ourselves.
-	const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
-	return dirs.some((d) => executable(path.join(d, BIN)));
+	// resolveBin() only returns the bare name when it found nothing runnable.
+	return BIN.includes('/') && executable(BIN);
 }
 
 /** One-line summary of a tool call, for the "used Bash: …" line in the transcript. */
@@ -224,7 +245,7 @@ export async function* runTurn(opts: {
 			...process.env,
 			// systemd units often have no HOME; without one the CLI can't find its
 			// credentials or its session transcripts.
-			HOME: env.CLAUDE_HOME || process.env.HOME || WORKSPACE,
+			HOME,
 			// Keep the child from trying to draw a TUI into a pipe.
 			CI: '1',
 			TERM: 'dumb'
