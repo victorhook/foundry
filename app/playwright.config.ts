@@ -29,7 +29,14 @@ export default defineConfig({
 			DATABASE_PATH: '.e2e-data/foundry.db',
 			AUTH_SECRET: 'e2e-secret',
 			ADMIN_USER: 'e2e',
-			ADMIN_PASSWORD: 'e2e-pass'
+			ADMIN_PASSWORD: 'e2e-pass',
+			// The AI chat page renders differently depending on whether the `claude`
+			// CLI exists on the machine, which would make the test pass on a dev box
+			// and fail on CI. Point it at a binary that is always present so the
+			// "installed" UI is what gets tested; node is never used as a CLI here
+			// because no e2e test sends a message (that would spawn the real agent).
+			CLAUDE_BIN: process.execPath,
+			AI_WORKSPACE: '.e2e-data/ai-workspace'
 		}
 	}
 });
