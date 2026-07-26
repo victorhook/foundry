@@ -61,6 +61,27 @@ curl -s -H "Authorization: Bearer $API_TOKEN" https://<your-host>/api/data \
   | jq '.workouts[] | {date: (.startedAt/1000 | todate), exercises: (.entries | length)}'
 ```
 
+## Use with ChatGPT (custom GPT Action)
+
+An OpenAPI 3.1 spec is provided at [`openapi.yaml`](./openapi.yaml). To wire it
+into a custom GPT:
+
+1. In ChatGPT, create/edit a GPT → **Configure** → **Create new action**.
+2. Paste the contents of `openapi.yaml` into the schema box (or import it).
+3. Edit the `servers[0].url` to your real origin, e.g.
+   `https://fitness.yourdomain.com` (must be HTTPS).
+4. Under **Authentication**, choose **API Key**, Auth Type **Bearer**, and paste
+   your `API_TOKEN` value.
+5. Save. The GPT can now call `getAllData` and answer questions over your
+   workouts, notes, goals, nutrition, steps, etc.
+
+The whole dataset comes back in one `GET /api/data` call — there's no
+pagination, so the GPT fetches once and filters (e.g. "workouts in the last 4
+weeks") itself. Since it's read-only, the GPT can't modify anything.
+
+> Heads up: pasting the token into a GPT's Action stores it with that GPT.
+> Treat it like a password, and rotate `API_TOKEN` on the server if it leaks.
+
 ## Notes
 
 - The token is a single shared secret. Rotate it by changing `API_TOKEN` and

@@ -1,0 +1,298 @@
+openapi: 3.1.0
+info:
+  title: Foundry Read API
+  description: >
+    Read-only access to your Foundry workout tracker: workouts (with exercises,
+    sets, per-exercise pain and notes), the exercise library, standalone notes,
+    goals, nutrition (foods/meals), body weight, daily steps, and profile.
+    Authentication is a single bearer token (the server's API_TOKEN). Only GET is
+    permitted — the token cannot create or change anything.
+  version: 1.0.0
+servers:
+  # Replace with your deployment's origin (must be HTTPS for a ChatGPT Action).
+  - url: https://YOUR-DOMAIN
+    description: Foundry server
+security:
+  - bearerAuth: []
+paths:
+  /api/data:
+    get:
+      operationId: getAllData
+      summary: Fetch the full dataset
+      description: >
+        Returns every collection in one JSON document. There is no pagination or
+        filtering — fetch it and filter client-side (e.g. workouts by date).
+      responses:
+        "200":
+          description: The complete dataset.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Data"
+        "401":
+          description: Missing or invalid bearer token.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "Send the Foundry API_TOKEN as `Authorization: Bearer <token>`."
+  schemas:
+    Data:
+      type: object
+      properties:
+        workouts:
+          type: array
+          items: { $ref: "#/components/schemas/Workout" }
+        exercises:
+          type: array
+          items: { $ref: "#/components/schemas/Exercise" }
+        notes:
+          type: array
+          items: { $ref: "#/components/schemas/Note" }
+        goals:
+          type: array
+          items: { $ref: "#/components/schemas/Goal" }
+        templates:
+          type: array
+          items: { $ref: "#/components/schemas/Template" }
+        programs:
+          type: array
+          items: { $ref: "#/components/schemas/Program" }
+        foods:
+          type: array
+          items: { $ref: "#/components/schemas/Food" }
+        meals:
+          type: array
+          items: { $ref: "#/components/schemas/Meal" }
+        profile:
+          $ref: "#/components/schemas/Profile"
+        bodyWeights:
+          type: array
+          items: { $ref: "#/components/schemas/BodyWeight" }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/StepDay" }
+        albums:
+          type: array
+          items: { $ref: "#/components/schemas/Album" }
+        photos:
+          type: array
+          items: { $ref: "#/components/schemas/Photo" }
+        painCategories:
+          type: array
+          items: { type: string }
+        muscleGroups:
+          type: array
+          items: { type: string }
+        workoutThemes:
+          type: array
+          items: { type: string }
+        fitConnected:
+          type: boolean
+          description: Whether Google Fit step sync is connected.
+    Workout:
+      type: object
+      properties:
+        id: { type: string }
+        startedAt:
+          type: integer
+          format: int64
+          description: Start time as Unix epoch milliseconds.
+        routineName:
+          type: [string, "null"]
+          description: e.g. "Gym", "Home Workout", "Run", "Walk", or null.
+        theme:
+          type: [string, "null"]
+          description: Optional category tag (e.g. "Shoulders", "Knee rehab").
+        feel:
+          type: [integer, "null"]
+          description: Overall effort / RPE, 1–10.
+        energy:
+          type: [integer, "null"]
+          description: Energy rating, 1–5.
+        notes: { type: string }
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/WorkoutEntry" }
+        pains:
+          type: array
+          description: Historical workout-level pain (no longer logged; present on older workouts).
+          items: { $ref: "#/components/schemas/Pain" }
+    WorkoutEntry:
+      type: object
+      description: One exercise within a workout.
+      properties:
+        exerciseId:
+          type: string
+          description: References an Exercise.id.
+        sets:
+          type: array
+          items: { $ref: "#/components/schemas/Set" }
+        note: { type: string }
+        pain:
+          oneOf:
+            - $ref: "#/components/schemas/Pain"
+            - type: "null"
+    Set:
+      type: object
+      description: >
+        A strength set uses reps (+ weight). A cardio entry has a single set
+        with duration/distance (+ optional pace) instead.
+      properties:
+        reps: { type: [integer, "null"] }
+        weight:
+          type: [number, "null"]
+          description: Load in kg, or seconds when the exercise's unit is "sec". Null for bodyweight.
+        duration:
+          type: [number, "null"]
+          description: Cardio minutes.
+        distance:
+          type: [number, "null"]
+          description: Cardio kilometres.
+        pace:
+          type: [string, "null"]
+          description: Cardio pace, e.g. "normal" or "fast".
+    Pain:
+      type: object
+      properties:
+        cat: { type: string, description: Body area, e.g. "Knees". }
+        level: { type: integer, description: Severity 1–10. }
+    Exercise:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type:
+          type: string
+          enum: [strength, cardio]
+        muscles:
+          type: array
+          items: { type: string }
+        bodyweight: { type: boolean }
+        unit:
+          type: string
+          enum: [kg, sec]
+        image:
+          type: [string, "null"]
+          description: Filename served at /api/file/{image} (requires auth).
+        custom: { type: boolean }
+    Note:
+      type: object
+      properties:
+        id: { type: string }
+        day: { type: string, description: "Date, YYYY-MM-DD." }
+        text: { type: string }
+        createdAt: { type: integer, format: int64, description: Epoch milliseconds. }
+    Goal:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string, description: 'e.g. "weekly" (a target count) or a generic check-off.' }
+        title: { type: string }
+        target: { type: [number, "null"] }
+        filter:
+          type: [string, "null"]
+          description: Optional routine id the goal is scoped to (e.g. "gym").
+        done: { type: boolean }
+        ord: { type: integer }
+        createdAt: { type: integer, format: int64 }
+    Profile:
+      type: object
+      properties:
+        dob: { type: [string, "null"], description: "Date of birth, YYYY-MM-DD." }
+        height: { type: [number, "null"], description: Centimetres. }
+        gender: { type: [string, "null"] }
+        targets:
+          type: object
+          properties:
+            kcal: { type: [number, "null"] }
+            protein: { type: [number, "null"] }
+            carbs: { type: [number, "null"] }
+            fat: { type: [number, "null"] }
+    BodyWeight:
+      type: object
+      properties:
+        id: { type: string }
+        at: { type: integer, format: int64, description: Epoch milliseconds. }
+        weight: { type: number, description: Kilograms. }
+    StepDay:
+      type: object
+      properties:
+        day: { type: string, description: "Date, YYYY-MM-DD." }
+        steps: { type: integer }
+    Template:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        icon: { type: [string, "null"] }
+        entries:
+          type: array
+          items:
+            type: object
+            properties:
+              exerciseId: { type: string }
+              setCount: { type: integer }
+              reps: { type: [integer, "null"] }
+              weight: { type: [number, "null"] }
+    Program:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        kind: { type: string }
+        filename: { type: [string, "null"] }
+        mime: { type: [string, "null"] }
+        startDate: { type: [string, "null"], description: "YYYY-MM-DD." }
+        notes: { type: string }
+        createdAt: { type: integer, format: int64 }
+    Food:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        image: { type: [string, "null"] }
+        kcal: { type: number }
+        protein: { type: number }
+        carbs: { type: number }
+        fat: { type: number }
+    Meal:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        icon: { type: [string, "null"] }
+        everyday: { type: boolean }
+        slot: { type: [string, "null"] }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              foodId: { type: [string, "null"] }
+              grams: { type: [number, "null"] }
+              qty: { type: [number, "null"] }
+              name: { type: string }
+              kcal: { type: number }
+              protein: { type: number }
+              carbs: { type: number }
+              fat: { type: number }
+    Album:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        created_at: { type: integer, format: int64 }
+    Photo:
+      type: object
+      properties:
+        id: { type: string }
+        albumId: { type: [string, "null"] }
+        mime: { type: string }
+        caption: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        takenAt: { type: [integer, "null"], format: int64 }
+        createdAt: { type: integer, format: int64 }
