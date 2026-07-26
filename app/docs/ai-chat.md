@@ -18,10 +18,36 @@ phone ──POST /api/chat/stream──▶ SvelteKit ──spawn──▶ claude
 | Piece | Where |
 |---|---|
 | CLI bridge (spawn, parse, guardrails) | `src/lib/server/claude.ts` |
+| Data export shape (pure) | `src/lib/server/snapshot.ts` |
+| Data export writer (reads the DB) | `src/lib/server/snapshot-write.ts` |
 | Chat list / transcript CRUD | `src/routes/api/chat/+server.ts` |
 | One streamed turn | `src/routes/api/chat/stream/+server.ts` |
 | Tables `chat`, `chat_message` | `src/lib/server/db.ts` (migration v20 → v21) |
 | Views, streaming client | `src/lib/foundry.ts` (`viewChats`, `viewChat`, `sendChat`) |
+
+## How it sees your Foundry data
+
+The agent has **no database connection and no API token** — deliberately, so
+nothing running in the sandbox can write to Foundry or exfiltrate a credential.
+Instead, every turn writes `foundry-data.json` into the workspace (read-only,
+mode 444) and the system prompt tells the agent it's there.
+
+It contains workouts with their sets, exercises, body weights, steps, notes,
+goals, profile targets, and the last 60 days of the food diary — plus a `_readme`
+explaining the units and the gotchas (epoch-ms vs `YYYY-MM-DD`, `unit: "sec"`
+meaning the "weight" field is really seconds, absent ≠ zero), and pre-computed
+`today` / `weekStartMonday` in the server's timezone so date ranges don't depend
+on the agent guessing what "this week" means. **`TZ` must be set** in
+`/opt/foundry/.env` or those dates are UTC-based.
+
+`counts` is included so the agent can size the file before deciding how to read
+it. Full history is kept — progress questions span years — which means roughly
+2 KB per logged session, so the prompt tells it to query with `jq` rather than
+read the whole thing into context.
+
+If you'd rather it query live instead, the pieces are there: Foundry already has
+a read-only bearer API (`docs/api.md`). It's not wired up on purpose — that would
+put a credential inside the sandbox, and the agent does go looking for one.
 
 **Conversation state lives in the CLI**, not in Foundry. Each chat row stores the
 CLI's session UUID (`chat.cli_session`); every turn after the first passes it back
@@ -132,6 +158,19 @@ fixed tool set: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebSearch`,
 
 There is also a deny list in `claude.ts` covering `sudo`, `systemctl`, `rm -rf /`,
 `curl … | sh`, writes to `.env`, and similar.
+
+**The child process gets an environment allowlist, not a copy of the app's.** The
+agent's shell can read its own environment, so `AUTH_SECRET`, `ADMIN_PASSWORD`,
+`API_TOKEN`, `DATABASE_PATH` and the Google Fit client secret are stripped; only
+`CLAUDE_*` / `ANTHROPIC_*`, `PATH`, `HOME`, `TZ`, locale and proxy variables get
+through (`childEnv()`, unit-tested). In practice the CLI also refuses to run
+`env`/`printenv` without approval, which nobody can give headless — but don't rely
+on that, it's the CLI's policy and it could change.
+
+**Worth doing:** `sudo chown root:root /opt/foundry/.env && sudo chmod 600
+/opt/foundry/.env`. systemd reads `EnvironmentFile=` as root *before* dropping to
+`User=`, so the service still starts, while the agent — running as that user —
+can't `cat` the file. Nothing else on the VPS reads it.
 
 > **Be clear-eyed about the boundary.** `acceptEdits` confines `Edit`/`Write` to
 > the workspace, but **`Bash` is not confined by the working directory** — a shell

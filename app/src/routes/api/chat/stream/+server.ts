@@ -7,7 +7,8 @@ import {
 	renameChat,
 	type ChatTool
 } from '$lib/server/db';
-import { runTurn } from '$lib/server/claude';
+import { runTurn, WORKSPACE } from '$lib/server/claude';
+import { writeSnapshot } from '$lib/server/snapshot-write';
 import type { RequestHandler } from './$types';
 
 // One conversational turn, streamed to the browser as SSE. POST (not EventSource)
@@ -82,8 +83,13 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 			const tools: ChatTool[] = [];
 			let persisted = false;
 
+			// Refresh the agent's data export so it can answer questions about the
+			// owner's training without a DB connection or an API token. Best-effort:
+			// a turn is still useful without it, and the system prompt says as much.
+			const snapshot = writeSnapshot(WORKSPACE, process.env.TZ);
+
 			try {
-				for await (const ev of runTurn({ prompt: text, resume, signal: request.signal })) {
+				for await (const ev of runTurn({ prompt: text, resume, signal: request.signal, snapshot })) {
 					if (ev.type === 'session') {
 						// Store on the first turn; harmless to rewrite if it ever changes.
 						setChatCliSession(chatId, ev.sessionId);

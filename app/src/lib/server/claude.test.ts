@@ -1,8 +1,64 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createTurnParser, findBin } from './claude';
+import { createTurnParser, findBin, childEnv } from './claude';
+
+// The agent's Bash tool can read its own environment, so anything we hand the
+// child process is readable by whatever the model decides to run — including a
+// command it was talked into by a web page it fetched. The app's own secrets
+// must therefore never be in there.
+describe('childEnv', () => {
+	afterEach(() => vi.unstubAllEnvs());
+
+	const secrets = {
+		AUTH_SECRET: 'session-signing-secret',
+		ADMIN_USER: 'victor',
+		ADMIN_PASSWORD: 'hunter2',
+		API_TOKEN: 'read-api-bearer-token',
+		GOOGLE_CLIENT_ID: 'google-id',
+		GOOGLE_CLIENT_SECRET: 'google-secret',
+		DATABASE_PATH: '/opt/foundry/data/foundry.db'
+	};
+
+	it('withholds every app secret from the agent', () => {
+		for (const [k, v] of Object.entries(secrets)) { vi.stubEnv(k, v); }
+		const e = childEnv();
+		for (const k of Object.keys(secrets)) {
+			expect(e[k], `${k} must not reach the agent`).toBeUndefined();
+		}
+		// Belt-and-braces: no value from .env should appear under any other name.
+		expect(Object.values(e)).not.toContain('hunter2');
+		expect(Object.values(e)).not.toContain('read-api-bearer-token');
+	});
+
+	it('passes through what the CLI needs to run and authenticate', () => {
+		vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'oat-token');
+		vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-key');
+		vi.stubEnv('TZ', 'Europe/Stockholm');
+		vi.stubEnv('HTTPS_PROXY', 'http://proxy:8080');
+		const e = childEnv();
+		expect(e.CLAUDE_CODE_OAUTH_TOKEN).toBe('oat-token');
+		expect(e.ANTHROPIC_API_KEY).toBe('sk-ant-key');
+		// TZ matters for correctness, not just cosmetics: it decides which calendar
+		// day "this week" starts on.
+		expect(e.TZ).toBe('Europe/Stockholm');
+		expect(e.HTTPS_PROXY).toBe('http://proxy:8080');
+		expect(e.PATH).toBeDefined();
+	});
+
+	it('always sets HOME, and a non-interactive terminal', () => {
+		const e = childEnv();
+		expect(e.HOME).toBeTruthy();
+		expect(e.CI).toBe('1');
+		expect(e.TERM).toBe('dumb');
+	});
+
+	it('drops unknown variables rather than allowing them through', () => {
+		vi.stubEnv('SOME_FUTURE_SECRET', 'nope');
+		expect(childEnv().SOME_FUTURE_SECRET).toBeUndefined();
+	});
+});
 
 // Locating the CLI. The production failure this guards against: the official
 // installer puts `claude` in ~/.local/bin, which a systemd unit's default PATH

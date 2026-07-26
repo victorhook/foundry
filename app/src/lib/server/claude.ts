@@ -14,7 +14,8 @@ import type { ChatTool } from './db';
 // nobody is watching. See docs/ai-chat.md for what that does and does not
 // contain.
 
-const WORKSPACE = path.resolve(env.AI_WORKSPACE || 'ai-workspace');
+/** The agent's working directory. The route writes its data export in here. */
+export const WORKSPACE = path.resolve(env.AI_WORKSPACE || 'ai-workspace');
 const TURN_TIMEOUT_MS = Number(env.CLAUDE_TURN_TIMEOUT_MS || 10 * 60 * 1000);
 
 const HOME = env.CLAUDE_HOME || process.env.HOME || WORKSPACE;
@@ -83,15 +84,66 @@ function denyRules(): string[] {
 	];
 }
 
-const SYSTEM_PROMPT = [
-	'You are the assistant built into Foundry, a personal fitness-tracking web app.',
-	'You are talking to the app owner through a chat page on their phone, so keep',
-	'replies short and readable on a small screen — no wide tables, no long preambles.',
-	'You are running headless on the app server: nobody can answer a permission',
-	'prompt or a clarifying question mid-task, so make reasonable calls yourself and',
-	'say what you assumed. You have a scratch directory as your working directory —',
-	'use it for any files you need. Do not modify the Foundry app or its database.'
-].join(' ');
+function systemPrompt(snapshot: string | null): string {
+	const lines = [
+		'You are the assistant built into Foundry, a personal fitness-tracking web app.',
+		'You are talking to the app owner through a chat page on their phone, so keep',
+		'replies short and readable on a small screen — no wide tables, no long preambles.',
+		'You are running headless on the app server: nobody can answer a permission',
+		'prompt or a clarifying question mid-task, so make reasonable calls yourself and',
+		'say what you assumed. Your working directory is a scratch directory — use it',
+		'for any files you need. Do not modify the Foundry app or its database.'
+	];
+	if (snapshot) {
+		lines.push(
+			`The owner's full Foundry data is in ${snapshot} — workouts with sets, body`,
+			'weights, steps, nutrition, notes, goals and targets. It is refreshed before',
+			'every turn, so read it whenever a question touches their training, food,',
+			'weight or progress; start there rather than looking for a database or an API.',
+			'Read its "_readme" and "counts" fields first: the readme explains the shape,',
+			'the units, and the pre-computed `today` / `weekStartMonday` to use for date',
+			'ranges, and counts tells you how much data is in there. It holds the owner\'s',
+			'entire history and can run to hundreds of KB, so query it with jq (or a short',
+			'script) and pull only the slice you need — do not read or cat the whole file',
+			'unless counts show it is genuinely small.'
+		);
+	} else {
+		lines.push(
+			'No Foundry data export is available this turn, so you cannot answer questions',
+			'about the owner\'s training or nutrition — say so rather than guessing.'
+		);
+	}
+	return lines.join(' ');
+}
+
+// The agent's shell can run `env`, so the child gets an allowlist rather than a
+// copy of the app's environment — otherwise AUTH_SECRET, ADMIN_PASSWORD, API_TOKEN
+// and the Google Fit client secret would all be readable by anything the agent
+// decides to run (or is talked into running by a web page it fetches).
+const ENV_ALLOW = new Set([
+	'PATH', 'TZ', 'LANG', 'LC_ALL', 'LC_CTYPE', 'SHELL', 'USER', 'LOGNAME', 'TMPDIR',
+	'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+	'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'
+]);
+// The CLI's own configuration and credentials.
+const ENV_ALLOW_PREFIXES = ['CLAUDE_', 'ANTHROPIC_'];
+
+export function childEnv(): NodeJS.ProcessEnv {
+	const out: NodeJS.ProcessEnv = {};
+	for (const [k, v] of Object.entries(process.env)) {
+		if (v === undefined) { continue; }
+		if (ENV_ALLOW.has(k) || ENV_ALLOW_PREFIXES.some((p) => k.startsWith(p))) {
+			out[k] = v;
+		}
+	}
+	// systemd units often have no HOME; without one the CLI can't find its
+	// credentials or its session transcripts.
+	out.HOME = HOME;
+	// Keep the child from trying to draw a TUI into a pipe.
+	out.CI = '1';
+	out.TERM = 'dumb';
+	return out;
+}
 
 export type ClaudeEvent =
 	| { type: 'session'; sessionId: string }
@@ -125,7 +177,7 @@ function toolDetail(name: string, input: any): string {
 	return s.startsWith(WORKSPACE + path.sep) ? s.slice(WORKSPACE.length + 1) : s;
 }
 
-function buildArgs(prompt: string, resume: string | null): string[] {
+function buildArgs(prompt: string, resume: string | null, snapshot: string | null): string[] {
 	const args = [
 		'-p',
 		prompt,
@@ -138,7 +190,7 @@ function buildArgs(prompt: string, resume: string | null): string[] {
 		'--tools',
 		...TOOLS,
 		'--append-system-prompt',
-		SYSTEM_PROMPT,
+		systemPrompt(snapshot),
 		'--settings',
 		JSON.stringify({ permissions: { deny: denyRules() } })
 	];
@@ -236,20 +288,14 @@ export async function* runTurn(opts: {
 	prompt: string;
 	resume: string | null;
 	signal?: AbortSignal;
+	/** Path to the caller's data export, mentioned in the system prompt. */
+	snapshot?: string | null;
 }): AsyncGenerator<ClaudeEvent> {
 	fs.mkdirSync(WORKSPACE, { recursive: true });
 
-	const child = spawn(BIN, buildArgs(opts.prompt, opts.resume), {
+	const child = spawn(BIN, buildArgs(opts.prompt, opts.resume, opts.snapshot ?? null), {
 		cwd: WORKSPACE,
-		env: {
-			...process.env,
-			// systemd units often have no HOME; without one the CLI can't find its
-			// credentials or its session transcripts.
-			HOME,
-			// Keep the child from trying to draw a TUI into a pipe.
-			CI: '1',
-			TERM: 'dumb'
-		},
+		env: childEnv(),
 		stdio: ['ignore', 'pipe', 'pipe']
 	});
 
