@@ -27,6 +27,9 @@ curl -H "Authorization: Bearer $API_TOKEN" https://<your-host>/api/data
   modify anything.
 - Bearer requests never receive a session cookie.
 - Requests without a valid cookie **or** matching bearer token get `401`.
+- `/api/chat*` is the one exception: AI chat transcripts require a browser
+  session, not a bearer token, because they can contain command output and file
+  contents. See [`ai-chat.md`](ai-chat.md).
 
 ## What you can fetch
 

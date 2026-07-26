@@ -10,6 +10,13 @@ WorkingDirectory=/opt/foundry
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOST=127.0.0.1
+# The AI chat page shells out to the `claude` CLI, which needs a HOME (that's
+# where it keeps credentials and the session transcripts `--resume` reads) and a
+# PATH that includes wherever it was installed. These MUST match the User= above:
+# the CLI is installed per-user into ~/.local/bin. Harmless if the AI chat isn't
+# set up. See docs/ai-chat.md.
+Environment=HOME=/home/victor
+Environment=PATH=/home/victor/.local/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/opt/foundry/.env
 ExecStart=/usr/bin/node build
 Restart=always
