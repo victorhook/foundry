@@ -327,7 +327,16 @@ export async function* runTurn(opts: {
 	opts.signal?.addEventListener('abort', onAbort);
 
 	const handleLine = (line: string) => {
-		for (const ev of parser.line(line)) { push(ev); }
+		for (const ev of parser.line(line)) {
+			// A bare subtype like "error_during_execution" tells the user nothing.
+			// Whatever the CLI wrote to stderr usually says what actually happened,
+			// so attach it — this error lands in the chat transcript.
+			if (ev.type === 'error' && stderr.trim() && !ev.message.includes(stderr.trim().slice(0, 40))) {
+				push({ type: 'error', message: `${ev.message}\n\n${stderr.trim().slice(-1200)}` });
+				continue;
+			}
+			push(ev);
+		}
 	};
 
 	let buf = '';

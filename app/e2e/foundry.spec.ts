@@ -614,3 +614,81 @@ test('AI chat: create, persist and delete a chat', async ({ page }) => {
 	await page.reload();
 	await expect(page.locator('.empty')).toContainText('No chats yet');
 });
+
+// The soft keyboard must never cover the chat composer. Two models to survive:
+// the app's viewport meta is interactive-widget=overlays-content, so the browser
+// may not resize anything (VisualViewport delta reads 0) and the keyboard height
+// comes from the VirtualKeyboard API instead. Real hardware can't be scripted, so
+// simulate both and assert the input stays inside the visible band.
+const KB = 320; // a typical Android keyboard
+
+async function installKeyboardSim(page: Page) {
+	await page.addInitScript(() => {
+		(window as any).__kbVp = 0; // height the VisualViewport pretends to lose
+		(window as any).__kbVk = 0; // height the VirtualKeyboard API reports
+		const vp = window.visualViewport!;
+		const realHeight = vp.height;
+		Object.defineProperty(vp, 'height', {
+			configurable: true,
+			get: () => realHeight - (window as any).__kbVp
+		});
+		const listeners: Array<() => void> = [];
+		Object.defineProperty(navigator, 'virtualKeyboard', {
+			configurable: true,
+			value: {
+				overlaysContent: false,
+				get boundingRect() {
+					return { height: (window as any).__kbVk };
+				},
+				addEventListener: (_: string, fn: () => void) => listeners.push(fn),
+				__fire: () => listeners.forEach((fn) => fn())
+			}
+		});
+	});
+}
+
+/** Raise the simulated keyboard via one of the two mechanisms. */
+async function raiseKeyboard(page: Page, via: 'visualViewport' | 'virtualKeyboard') {
+	await page.evaluate(
+		({ via, kb }) => {
+			if (via === 'visualViewport') {
+				(window as any).__kbVp = kb;
+				window.visualViewport!.dispatchEvent(new Event('resize'));
+			} else {
+				(window as any).__kbVk = kb;
+				(navigator as any).virtualKeyboard.__fire();
+			}
+		},
+		{ via, kb: KB }
+	);
+	// Let the layout settle after the custom property changes.
+	await page.waitForTimeout(120);
+}
+
+for (const via of ['visualViewport', 'virtualKeyboard'] as const) {
+	test(`AI chat: composer stays above the keyboard (${via})`, async ({ page }) => {
+		await installKeyboardSim(page);
+		await login(page);
+		await menuNav(page, 'AI chat');
+		await page.locator('[data-act="new-chat"]').click();
+
+		const input = page.locator('.chat-input');
+		await expect(input).toBeVisible();
+		await input.click();
+		await input.fill('Summarize this week');
+		await raiseKeyboard(page, via);
+
+		const viewportH = await page.evaluate(() => window.innerHeight);
+		const box = await input.boundingBox();
+		expect(box).not.toBeNull();
+		// The keyboard occupies the bottom KB pixels; the input must sit above it.
+		expect(
+			box!.y + box!.height,
+			`input bottom (${box!.y + box!.height}) must clear the keyboard line (${viewportH - KB})`
+		).toBeLessThanOrEqual(viewportH - KB + 2);
+		// And still be on screen, not pushed off the top.
+		expect(box!.y).toBeGreaterThan(0);
+		// The text is still there to read while typing.
+		await expect(input).toHaveValue('Summarize this week');
+	});
+}

@@ -4293,6 +4293,28 @@ document.addEventListener("pointercancel", () => endDrag(false));
    the focused field into the band between the header and the keyboard. */
 const vp = typeof window !== "undefined" ? window.visualViewport : null;
 
+// The viewport meta says interactive-widget=overlays-content, which asks the
+// browser NOT to resize or reflow the page for the keyboard (so tapping a
+// reps/weight field doesn't shift the steppers under your finger). The trade-off
+// is that the VisualViewport delta can read 0 — nothing was resized — leaving a
+// bottom-anchored bar sitting underneath the keyboard.
+//
+// The companion to that meta is the VirtualKeyboard API: opting in makes the
+// browser report the keyboard's geometry, both as `geometrychange` events and as
+// the CSS env(keyboard-inset-*) variables. We take whichever source gives a
+// number, so a bottom bar lifts under either behaviour.
+const vk = typeof navigator !== "undefined" ? navigator.virtualKeyboard : null;
+if (vk) {
+  // Consistent with the meta tag — the page, not the browser, handles the inset.
+  vk.overlaysContent = true;
+}
+
+function keyboardHeight() {
+  const fromVp = vp ? Math.max(0, window.innerHeight - vp.height - vp.offsetTop) : 0;
+  const fromVk = vk && vk.boundingRect ? vk.boundingRect.height : 0;
+  return Math.max(fromVp, fromVk);
+}
+
 function isTextField(el) {
   if (!el) { return false; }
   if (el.tagName === "TEXTAREA") { return true; }
@@ -4306,11 +4328,15 @@ function isTextField(el) {
 function ensureFieldVisible(el) {
   if (!vp || !isTextField(el)) { return; }
   const r = el.getBoundingClientRect();
-  const footer = document.querySelector(".footer");
-  const footerH = footer && document.body.classList.contains("kb-open")
-    ? footer.getBoundingClientRect().height : 0;
-  const visibleTop = 64;                          // clear the sticky header
-  const visibleBottom = vp.height - footerH - 12; // clear keyboard + footer
+  // Whichever bottom bar this screen has: the workout/editor footer, or the AI
+  // chat composer.
+  const bar = document.querySelector(".footer, .chat-composer");
+  const barH = bar && document.body.classList.contains("kb-open")
+    ? bar.getBoundingClientRect().height : 0;
+  const visibleTop = 64; // clear the sticky header
+  // Under overlays-content the visual viewport isn't resized, so derive the
+  // usable band from the measured keyboard height rather than vp.height.
+  const visibleBottom = window.innerHeight - keyboardHeight() - barH - 12;
   if (r.bottom > visibleBottom) {
     window.scrollBy({ top: r.bottom - visibleBottom, behavior: "smooth" });
   } else if (r.top < visibleTop) {
@@ -4319,8 +4345,7 @@ function ensureFieldVisible(el) {
 }
 
 function onKeyboardViewport() {
-  if (!vp) { return; }
-  const kb = Math.max(0, window.innerHeight - vp.height - vp.offsetTop);
+  const kb = keyboardHeight();
   const open = kb > 90; // ignore small URL-bar / toolbar collapses
   document.documentElement.style.setProperty("--kb", kb + "px");
   document.body.classList.toggle("kb-open", open);
@@ -4329,6 +4354,9 @@ function onKeyboardViewport() {
 if (vp) {
   vp.addEventListener("resize", onKeyboardViewport);
   vp.addEventListener("scroll", onKeyboardViewport);
+}
+if (vk) {
+  vk.addEventListener("geometrychange", onKeyboardViewport);
 }
 // Switching fields while the keyboard is already up won't fire a viewport
 // resize — nudge the newly focused field into view too.

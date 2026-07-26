@@ -982,13 +982,28 @@
   /* ---------- AI chat ---------- */
   /* The chat page owns its own scroll (transcript scrolls, composer is pinned)
      rather than scrolling the window, so new text can't push the input off
-     screen. Shrinking by --kb keeps the composer above the soft keyboard. */
+     screen. Shrinking the page by the keyboard height keeps the composer above
+     the keyboard.
+
+     Two sources for that height, because the viewport meta is
+     interactive-widget=overlays-content: the browser deliberately doesn't resize
+     anything, so --kb (VisualViewport delta) can read 0. env(keyboard-inset-height)
+     comes from the VirtualKeyboard API, which foundry.ts opts into for exactly
+     this case. Whichever reports, the composer lifts. */
   .chat-app {
+    --chat-kb: max(var(--kb, 0px), env(keyboard-inset-height, 0px));
+    /* This element also carries .app, which sets min-height: 100dvh — and
+       min-height wins over height, so without resetting it the shrink below is
+       silently ignored and the composer stays under the keyboard. */
+    min-height: 0;
     height: 100dvh;
     max-height: 100dvh;
-    height: calc(100dvh - var(--kb, 0px));
-    max-height: calc(100dvh - var(--kb, 0px));
-    overflow: hidden;
+    height: calc(100dvh - var(--chat-kb));
+    max-height: calc(100dvh - var(--chat-kb));
+    /* clip, not hidden: `hidden` still makes this a scroll container, so focusing
+       the textarea lets the browser scroll the whole page frame a few pixels and
+       drag the header out from under the notch. */
+    overflow: clip;
   }
   .chat-scroll {
     flex: 1; min-height: 0; overflow-y: auto;
@@ -996,6 +1011,12 @@
     overscroll-behavior: contain;
     scrollbar-width: none;
   }
+  /* The global `body.kb-open main` rule pads the page to make room for the lifted
+     footer on scroll-the-window screens. Here the transcript is its own scroll
+     container and the composer is inside the frame, so that padding would leave
+     a keyboard-sized gap below the newest message — exactly where you're looking
+     while typing. Higher specificity, so it wins. */
+  body.kb-open main.chat-scroll { padding-bottom: 8px; }
   .chat-scroll::-webkit-scrollbar { display: none; }
   .chat-title {
     font-size: 0.8rem; font-weight: 600; color: var(--muted);
