@@ -9,6 +9,11 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+# Long-lived Claude subscription token from `claude setup-token` (AI chat auth).
+# It belongs in /opt/foundry/.env on the server, never in the repo.
+.claude_token
+*.claude_token
+claude_token*
 .deploy.env
 foundry-deploy
 foundry-deploy.pub
