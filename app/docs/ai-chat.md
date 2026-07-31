@@ -33,12 +33,25 @@ Instead, every turn writes `foundry-data.json` into the workspace (read-only,
 mode 444) and the system prompt tells the agent it's there.
 
 It contains workouts with their sets, exercises, body weights, steps, notes,
-goals, profile targets, and the last 60 days of the food diary — plus a `_readme`
-explaining the units and the gotchas (epoch-ms vs `YYYY-MM-DD`, `unit: "sec"`
-meaning the "weight" field is really seconds, absent ≠ zero), and pre-computed
-`today` / `weekStartMonday` in the server's timezone so date ranges don't depend
-on the agent guessing what "this week" means. **`TZ` must be set** in
-`/opt/foundry/.env` or those dates are UTC-based.
+goals, profile targets, and the last 60 days of the food diary.
+
+**The derived work is done server-side, on purpose.** The first version handed
+over raw rows and a turn cost ~21 shell commands: converting epoch timestamps
+with `date -d`, joining exerciseIds to names, and shelling out to python to sum
+sets. Each workout now carries `day` / `weekday` / `time` / `weekStartMonday`
+already in the server's timezone, `volumeKg` (total load moved), `durationMin`
+and `distanceKm`, and `exercises[]` with **names already resolved**. `volumeKg`
+is null where kilograms would be a lie — a `sec` unit puts seconds in the weight
+field, and bodyweight exercises log no external load.
+
+`_readme` explains the shape; `_recipes` ships ready-made jq queries for the
+common questions (this week, one exercise over time, weekly volume, body-weight
+trend, recent nutrition). Together those took the same question from ~21 commands
+to 2-4. Keep the recipes to a single `jq` call — an earlier version wrapped a
+nested `$(jq ...)` subshell and the agent flailed around it, which the turn log
+made obvious.
+
+**`TZ` must be set** in `/opt/foundry/.env` or every date is UTC-based.
 
 `counts` is included so the agent can size the file before deciding how to read
 it. Full history is kept — progress questions span years — which means roughly
@@ -197,6 +210,7 @@ All optional except credentials. See `.env.example`.
 | `CLAUDE_HOME` | `$HOME` | Override where the CLI looks for credentials |
 | `CLAUDE_MODEL` | CLI default | e.g. `opus`, `sonnet`, or a full model name |
 | `CLAUDE_TURN_TIMEOUT_MS` | `600000` | Kill a turn that runs longer than this |
+| `AI_CHAT_LOG` | `<db dir>/ai-chat.log` | Per-turn debug log (see below) |
 
 ## Behaviour worth knowing
 
@@ -207,8 +221,17 @@ All optional except credentials. See `.env.example`.
 - **Partial replies are kept.** If the CLI dies or the connection drops mid-turn,
   the text received so far is stored rather than discarded, so a chat never ends
   on a user message with no answer.
-- **Tool calls are shown.** Each turn lists the tools it used, with the command,
-  query, or path — so you can see what actually happened on the box.
+- **Tool calls are summarised, not listed.** A turn can run a dozen commands, so
+  the transcript shows one line ("4 steps · Bash ×4") that expands on tap. The
+  full, untruncated command list goes to `AI_CHAT_LOG` (mode 600, one JSON object
+  per turn, rotated at 5 MB) — deliberately outside the workspace so the agent
+  can't read or edit its own logs. The CLI's own transcripts under
+  `$HOME/.claude/projects/<slug>/*.jsonl` have tool *outputs* too, when that
+  isn't enough.
+- **Replies are Markdown.** Headings, bold, italics, lists, code, blockquotes,
+  rules and narrow tables render; anything else shows as text. The renderer
+  (`src/lib/markdown.ts`) escapes before inserting markup and only allows
+  `http(s)` links, so reply text can't inject HTML — see `markdown.test.ts`.
 - **Cost is per turn, on your Anthropic account.** A chatty agent turn with many
   tool calls costs meaningfully more than one message looks like. `CLAUDE_MODEL`
   and the CLI's own `--effort` default are the levers.

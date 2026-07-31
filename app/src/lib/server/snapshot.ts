@@ -205,9 +205,11 @@ export function buildSnapshot(s: SnapshotSources) {
 		// Copy-pasteable so a common question costs one command, not fifteen. `jq`
 		// and `python3` are both installed; there is no need to check.
 		_recipes: {
-			thisWeek: "jq '[.workouts[] | select(.day >= $ws)] ' --arg ws \"$(jq -r .weekStartMonday foundry-data.json)\" foundry-data.json",
+			// `.weekStartMonday as $ws` keeps this to one jq call — no shell
+			// substitution, no --arg, nothing to get quoting wrong.
+			thisWeek: "jq '.weekStartMonday as $ws | [.workouts[] | select(.day >= $ws)]' foundry-data.json",
 			thisWeekCompact:
-				"jq --arg ws \"$(jq -r .weekStartMonday foundry-data.json)\" '[.workouts[] | select(.day >= $ws) | {weekday, day, routineName, feel, energy, volumeKg, notes, exercises: [.exercises[] | {name, sets}]}]' foundry-data.json",
+				"jq '.weekStartMonday as $ws | [.workouts[] | select(.day >= $ws) | {weekday, day, time, routineName, feel, energy, volumeKg, durationMin, distanceKm, notes, exercises: [.exercises[] | {name, sets, volumeKg}]}]' foundry-data.json",
 			lastNWorkouts: "jq '.workouts[-5:]' foundry-data.json",
 			oneExerciseOverTime:
 				"jq --arg name 'Bench Press' '[.workouts[] | {day, sets: [.exercises[] | select(.name == $name) | .sets]} | select(.sets | length > 0)]' foundry-data.json",
