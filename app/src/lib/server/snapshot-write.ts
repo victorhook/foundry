@@ -18,6 +18,7 @@ import {
 	getPrograms
 } from './db';
 import { buildSnapshot, localDay, recentDays, NUTRITION_DAYS, SNAPSHOT_FILE } from './snapshot';
+import { tooling } from './claude';
 
 // The AI chat agent has no database connection and no API credentials — by
 // design, so nothing in the sandbox can write to Foundry or exfiltrate a token.
@@ -55,6 +56,9 @@ export function writeSnapshot(workspace: string, tz?: string): string | null {
 			goals: getGoals(),
 			profile: getProfile(),
 			foodLog,
+			// Recipes are emitted for what this box actually has — jq is absent on
+			// some servers, and jq one-liners there cost the agent commands.
+			tools: tooling(),
 			counts: {
 				photos: getPhotos().length,
 				albums: getAlbums().length,

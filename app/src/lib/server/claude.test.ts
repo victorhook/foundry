@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createTurnParser, findBin, childEnv } from './claude';
+import { createTurnParser, findBin, childEnv, onPath } from './claude';
 
 // The agent's Bash tool can read its own environment, so anything we hand the
 // child process is readable by whatever the model decides to run — including a
@@ -272,5 +272,38 @@ describe('createTurnParser', () => {
 		expect(p.finish('   ')).toEqual([
 			{ type: 'error', message: 'The agent exited without returning a result.' }
 		]);
+	});
+});
+
+// The system prompt asserts which tools exist. It got that wrong in production —
+// it claimed jq was installed on a box that had no jq, and the agent burned
+// commands discovering that. So the claim is probed, and the probe is tested.
+describe('onPath', () => {
+	let dir: string;
+	beforeAll(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-onpath-'));
+		fs.writeFileSync(path.join(dir, 'jq'), '#!/bin/sh\n', { mode: 0o755 });
+		fs.writeFileSync(path.join(dir, 'notexec'), 'x', { mode: 0o644 });
+	});
+	afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+	it('finds an executable on the given PATH', () => {
+		expect(onPath('jq', dir)).toBe(true);
+	});
+
+	it('reports missing tools as missing', () => {
+		expect(onPath('definitely-not-installed', dir)).toBe(false);
+	});
+
+	it('does not count a non-executable file of the right name', () => {
+		expect(onPath('notexec', dir)).toBe(false);
+	});
+
+	it('searches every PATH entry, not just the first', () => {
+		expect(onPath('jq', `/nonexistent${path.delimiter}${dir}`)).toBe(true);
+	});
+
+	it('copes with an empty PATH', () => {
+		expect(onPath('jq', '')).toBe(false);
 	});
 });

@@ -50,6 +50,24 @@ export function findBin(opts: { explicit?: string; pathEnv?: string; home: strin
 
 const BIN = findBin({ explicit: env.CLAUDE_BIN, pathEnv: process.env.PATH, home: HOME });
 
+/** Is `name` runnable from the service's PATH? */
+export function onPath(name: string, pathEnv = process.env.PATH): boolean {
+	return (pathEnv || '')
+		.split(path.delimiter)
+		.filter(Boolean)
+		.some((d) => executable(path.join(d, name)));
+}
+
+/**
+ * What the agent can actually call. Probed rather than assumed: the first version
+ * of the system prompt asserted "jq and python3 are installed", which was false on
+ * the production box — the agent ran a jq recipe, got "command not found", spent
+ * three commands rediscovering python3, and reimplemented the query by hand.
+ */
+export function tooling() {
+	return { jq: onPath('jq'), python3: onPath('python3') };
+}
+
 // Tools the chat agent may use. Deliberately excludes Task (subagents would
 // multiply cost invisibly) and the git/PR helpers — this is a chat, not CI.
 const TOOLS = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'TodoWrite'];
@@ -82,6 +100,18 @@ function denyRules(): string[] {
 		'Bash(crontab *)',
 		...secrets.flatMap((f) => [`Read(${f})`, `Edit(${f})`, `Write(${f})`])
 	];
+}
+
+/** Tell the agent what is really on this box, so it neither probes nor guesses. */
+function toolingLine(): string {
+	const t = tooling();
+	const have = [t.jq && '`jq`', t.python3 && '`python3`'].filter(Boolean) as string[];
+	if (!have.length) {
+		return 'Neither jq nor python3 is installed here, so parse the JSON with the tools you do have — and do not go looking for them.';
+	}
+	const missing = [!t.jq && 'jq', !t.python3 && 'python3'].filter(Boolean) as string[];
+	const head = `${have.join(' and ')} ${have.length > 1 ? 'are' : 'is'} installed; use ${have.length > 1 ? 'them' : 'it'} directly rather than checking whether ${have.length > 1 ? 'they exist' : 'it exists'}.`;
+	return missing.length ? `${head} ${missing.join(' and ')} is NOT installed — do not try it.` : head;
 }
 
 function systemPrompt(snapshot: string | null): string {
@@ -117,9 +147,9 @@ function systemPrompt(snapshot: string | null): string {
 			'volume totals are ALREADY computed in the file — you do not need `date`, an',
 			'exerciseId lookup, or a scratch script for any of them.',
 			'',
-			'`jq` and `python3` are installed; use them directly rather than checking',
-			'whether they exist. The file holds the owner\'s entire history and can run to',
-			'hundreds of KB, so select the slice you need instead of reading it whole.'
+			toolingLine(),
+			'The file holds the owner\'s entire history and can run to hundreds of KB, so',
+			'select the slice you need instead of reading it whole.'
 		);
 	} else {
 		lines.push(

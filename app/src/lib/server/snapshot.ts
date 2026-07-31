@@ -141,12 +141,70 @@ type SnapshotSources = {
 	/** Food-diary entries per day, keyed YYYY-MM-DD. Empty days are dropped. */
 	foodLog: Record<string, unknown[]>;
 	counts: Record<string, number>;
+	/** Which query tools the server actually has, probed not assumed. */
+	tools?: { jq?: boolean; python3?: boolean };
 };
 
 /**
  * Assemble the snapshot object. Pure — takes the data rather than reading the
  * DB — so the shape and the derived date fields are unit-testable.
  */
+
+/**
+ * Query recipes, emitted for the tools this server actually has. jq is the terse
+ * option, but it is not installed everywhere — handing the agent jq one-liners on
+ * a box without jq is worse than handing it none, because it burns commands
+ * discovering that and reimplementing them.
+ */
+export function recipesFor(tools?: { jq?: boolean; python3?: boolean }): Record<string, string> {
+	const F = 'foundry-data.json';
+	if (tools?.jq !== false) {
+		return {
+			// `.weekStartMonday as $ws` keeps this to one jq call — no shell
+			// substitution, no --arg, nothing to get quoting wrong.
+			thisWeek: `jq '.weekStartMonday as $ws | [.workouts[] | select(.day >= $ws)]' ${F}`,
+			thisWeekCompact: `jq '.weekStartMonday as $ws | [.workouts[] | select(.day >= $ws) | {weekday, day, time, routineName, feel, energy, volumeKg, durationMin, distanceKm, notes, exercises: [.exercises[] | {name, sets, volumeKg}]}]' ${F}`,
+			lastNWorkouts: `jq '.workouts[-5:]' ${F}`,
+			oneExerciseOverTime: `jq --arg name 'Bench Press' '[.workouts[] | {day, sets: [.exercises[] | select(.name == $name) | .sets]} | select(.sets | length > 0)]' ${F}`,
+			weeklyVolume: `jq '[.workouts[] | {w: .weekStartMonday, v: .volumeKg}] | group_by(.w) | map({week: .[0].w, volumeKg: (map(.v // 0) | add), sessions: length})' ${F}`,
+			bodyWeightTrend: `jq '.bodyWeights[-14:]' ${F}`,
+			nutritionRecentDays: `jq '.nutrition.days[-7:]' ${F}`,
+			painRecent: `jq '.painNotes[-10:]' ${F}`,
+			painAreas: `jq '[.painNotes[].items[].cat] | unique' ${F}`,
+			painForAreaStandalone: `jq --arg area 'Knees' '[.painNotes[] | select(any(.items[]; .cat == $area)) | {day, weekday, note, level: (.items[] | select(.cat == $area) | .level)}]' ${F}`,
+			painForAreaInSession: `jq --arg area 'Knees' '[.workouts[] | {day, routineName, session: [.pains[] | select(.cat == $area)], perExercise: [.exercises[] | select(.pain.cat? == $area) | {name, pain}]} | select((.session | length) + (.perExercise | length) > 0)]' ${F}`
+		};
+	}
+	if (tools?.python3 === false) { return {}; }
+	// python3 fallback. `L` loads the file; each recipe stays a single short
+	// command, because long ones get mangled when the agent adapts them.
+	const L = `import json;d=json.load(open('${F}'))`;
+	const P = (body: string) => `python3 -c "${L};${body}"`;
+	return {
+		thisWeek: P("ws=d['weekStartMonday'];print(json.dumps([w for w in d['workouts'] if w['day']>=ws],indent=1))"),
+		thisWeekCompact: P(
+			"ws=d['weekStartMonday'];print(json.dumps([{k:w[k] for k in ('weekday','day','time','routineName','feel','energy','volumeKg','notes')}|{'ex':[(e['name'],e['sets']) for e in w['exercises']]} for w in d['workouts'] if w['day']>=ws],indent=1))"
+		),
+		lastNWorkouts: P("print(json.dumps(d['workouts'][-5:],indent=1))"),
+		oneExerciseOverTime: P(
+			"n='Bench Press';print(json.dumps([{'day':w['day'],'sets':[e['sets'] for e in w['exercises'] if e['name']==n]} for w in d['workouts'] if any(e['name']==n for e in w['exercises'])],indent=1))"
+		),
+		weeklyVolume: P(
+			"from collections import defaultdict;a=defaultdict(lambda:[0,0])\nfor w in d['workouts']:\n a[w['weekStartMonday']][0]+=w['volumeKg'] or 0;a[w['weekStartMonday']][1]+=1\nprint(json.dumps(dict(a),indent=1))"
+		),
+		bodyWeightTrend: P("print(json.dumps(d['bodyWeights'][-14:],indent=1))"),
+		nutritionRecentDays: P("print(json.dumps(d['nutrition']['days'][-7:],indent=1))"),
+		painRecent: P("print(json.dumps(d['painNotes'][-10:],indent=1))"),
+		painAreas: P("print(sorted({i['cat'] for p in d['painNotes'] for i in p['items']}))"),
+		painForAreaStandalone: P(
+			"a='Knees';print(json.dumps([{'day':p['day'],'note':p['note'],'level':[i['level'] for i in p['items'] if i['cat']==a]} for p in d['painNotes'] if any(i['cat']==a for i in p['items'])],indent=1))"
+		),
+		painForAreaInSession: P(
+			"a='Knees';print(json.dumps([{'day':w['day'],'routine':w['routineName'],'ex':[(e['name'],e['pain']) for e in w['exercises'] if (e.get('pain') or {}).get('cat')==a]} for w in d['workouts'] if any((e.get('pain') or {}).get('cat')==a for e in w['exercises']) or any(p['cat']==a for p in w['pains'])],indent=1))"
+		)
+	};
+}
+
 export function buildSnapshot(s: SnapshotSources) {
 	const today = localDay(s.now, s.timezone);
 	const weekStart = mondayOf(today);
@@ -234,33 +292,10 @@ export function buildSnapshot(s: SnapshotSources) {
 		].join('\n'),
 		// Copy-pasteable so a common question costs one command, not fifteen. `jq`
 		// and `python3` are both installed; there is no need to check.
-		_recipes: {
-			// `.weekStartMonday as $ws` keeps this to one jq call — no shell
-			// substitution, no --arg, nothing to get quoting wrong.
-			thisWeek: "jq '.weekStartMonday as $ws | [.workouts[] | select(.day >= $ws)]' foundry-data.json",
-			thisWeekCompact:
-				"jq '.weekStartMonday as $ws | [.workouts[] | select(.day >= $ws) | {weekday, day, time, routineName, feel, energy, volumeKg, durationMin, distanceKm, notes, exercises: [.exercises[] | {name, sets, volumeKg}]}]' foundry-data.json",
-			lastNWorkouts: "jq '.workouts[-5:]' foundry-data.json",
-			oneExerciseOverTime:
-				"jq --arg name 'Bench Press' '[.workouts[] | {day, sets: [.exercises[] | select(.name == $name) | .sets]} | select(.sets | length > 0)]' foundry-data.json",
-			weeklyVolume:
-				"jq '[.workouts[] | {w: .weekStartMonday, v: .volumeKg}] | group_by(.w) | map({week: .[0].w, volumeKg: (map(.v // 0) | add), sessions: length})' foundry-data.json",
-			bodyWeightTrend: "jq '.bodyWeights[-14:]' foundry-data.json",
-			painRecent: "jq '.painNotes[-10:]' foundry-data.json",
-			painAreas: "jq '[.painNotes[].items[].cat] | unique' foundry-data.json",
-			// Two short queries rather than one clever combined one: the agent adapts
-			// these before running them, and a long nested pipeline doesn't survive
-			// being edited — it starts writing .jq files and falling back to python.
-			// Run BOTH for an "how is my <area>" question; either alone is half the story.
-			painForAreaStandalone:
-				"jq --arg area 'Knees' '[.painNotes[] | select(any(.items[]; .cat == $area)) | {day, weekday, note, level: (.items[] | select(.cat == $area) | .level)}]' foundry-data.json",
-			painForAreaInSession:
-				"jq --arg area 'Knees' '[.workouts[] | {day, routineName, session: [.pains[] | select(.cat == $area)], perExercise: [.exercises[] | select(.pain.cat? == $area) | {name, pain}]} | select((.session | length) + (.perExercise | length) > 0)]' foundry-data.json",
-			nutritionRecentDays: "jq '.nutrition.days[-7:]' foundry-data.json"
-		},
+		_recipes: recipesFor(s.tools),
 		generatedAt: new Date(s.now).toISOString(),
 		today,
-		weekStartMonday: mondayOf(today),
+		weekStartMonday: weekStart,
 		timezone: s.timezone || 'unset (server default)',
 		profile: s.profile,
 		exercises: s.exercises,

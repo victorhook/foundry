@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSnapshot, mondayOf, recentDays, enrichWorkout } from './snapshot';
+import { buildSnapshot, mondayOf, recentDays, enrichWorkout, recipesFor } from './snapshot';
 
 // Date handling is the part most likely to produce a confidently wrong answer:
 // "summarize this week" hinges on which Monday the agent thinks it is.
@@ -351,5 +351,48 @@ describe('pain notes in the export', () => {
 		const r = buildSnapshot(base)._recipes;
 		expect(Object.keys(r)).toContain('painForAreaStandalone');
 		expect(Object.keys(r)).toContain('painForAreaInSession');
+	});
+});
+
+// The production box has python3 but no jq. Handing the agent jq one-liners there
+// is worse than handing it none: it runs one, gets "command not found", then
+// spends commands rediscovering python3 and reimplementing the query.
+describe('recipesFor', () => {
+	it('uses jq when jq is there', () => {
+		const r = recipesFor({ jq: true, python3: true });
+		expect(r.thisWeek.startsWith('jq ')).toBe(true);
+		expect(r.painForAreaInSession).toContain('jq ');
+	});
+
+	it('falls back to python3 when jq is missing', () => {
+		const r = recipesFor({ jq: false, python3: true });
+		expect(r.thisWeek.startsWith('python3 ')).toBe(true);
+		for (const q of Object.values(r)) {
+			expect(q).not.toContain('jq ');
+		}
+	});
+
+	it('covers the same questions either way', () => {
+		expect(Object.keys(recipesFor({ jq: false, python3: true })).sort()).toEqual(
+			Object.keys(recipesFor({ jq: true, python3: true })).sort()
+		);
+	});
+
+	it('offers nothing rather than something broken when neither exists', () => {
+		expect(recipesFor({ jq: false, python3: false })).toEqual({});
+	});
+
+	it('defaults to jq when the probe says nothing', () => {
+		expect(recipesFor().thisWeek.startsWith('jq ')).toBe(true);
+	});
+
+	it('threads the probe result through buildSnapshot', () => {
+		const base = {
+			now: Date.UTC(2026, 6, 30, 12), timezone: 'UTC',
+			exercises: [], workouts: [], bodyWeights: [], steps: [], notes: [], goals: [],
+			profile: {}, foodLog: {}, counts: {}
+		};
+		expect(buildSnapshot({ ...base, tools: { jq: false, python3: true } })._recipes.thisWeek).toContain('python3');
+		expect(buildSnapshot({ ...base, tools: { jq: true, python3: true } })._recipes.thisWeek).toContain('jq');
 	});
 });
