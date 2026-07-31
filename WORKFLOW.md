@@ -26,6 +26,15 @@ make push                     # pushes (pre-push hook re-runs the fast gate)
 Opening a pull request on GitHub runs **CI** (`.github/workflows/ci.yml`): type-check,
 unit tests, build, and e2e. Merge when it's green.
 
+CI runs those as parallel jobs — `checks` (type-check + unit + build) alongside one
+`e2e` job per spec file in `app/e2e/`. Two consequences when writing browser tests:
+
+- **Add a new spec file to the `e2e` matrix in `ci.yml`**, or it won't run in CI.
+- **Each spec must pass on its own against an empty database.** Every job gets its
+  own server and SQLite file, so a test can't rely on data another file created.
+  Run one file the way CI does with
+  `npx playwright test e2e/<name>.spec.ts`.
+
 ## Releasing to production
 
 **Pushing to `main` deploys automatically.** Once the `test` job is green, the
