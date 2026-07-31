@@ -631,6 +631,39 @@
   .pain-item-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; font-size: 0.9rem; }
   .pain-item .rpe-scale { width: 100%; }
 
+  /* Reminders (Web Push) */
+  .rem-note {
+    color: var(--muted); font-size: 0.85rem; padding: 12px 14px;
+    border: 1px dashed var(--line); border-radius: var(--radius);
+  }
+  .rem-on {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 12px 14px;
+  }
+  .rem-on-lbl { font-weight: 700; font-size: 0.9rem; }
+  .rem-on-actions { display: flex; gap: 8px; }
+  .rem-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .rem-card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 12px 14px;
+  }
+  .rem-card.off { opacity: 0.55; }
+  .rem-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .rem-time {
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    color: var(--text); font-weight: 700; font-size: 1.05rem; padding: 8px 10px;
+  }
+  .rem-actions { display: flex; align-items: center; gap: 8px; }
+  .rem-days { display: flex; gap: 6px; }
+  .rem-day {
+    flex: 1; height: 34px; border-radius: 9px;
+    background: var(--surface-2); border: 1px solid var(--line);
+    color: var(--muted-2); font-size: 0.78rem; font-weight: 800;
+    display: grid; place-items: center;
+  }
+  .rem-day.on { background: var(--accent); border-color: var(--accent); color: #14171C; }
+
   .date-input {
     width: 100%; background: var(--surface); border: 1px solid var(--line);
     border-radius: 12px; color: var(--text); padding: 13px 14px;

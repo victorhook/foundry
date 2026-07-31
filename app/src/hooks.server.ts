@@ -4,6 +4,11 @@ import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { SESSION_COOKIE, verifySession, createSession, sessionCookieOptions } from '$lib/server/auth';
 import { getFirstUserId } from '$lib/server/db';
+import { startScheduler } from '$lib/server/scheduler';
+
+// Kick off the in-process reminder scheduler once, at server start. No-op during
+// build analysis or when Web Push isn't configured.
+startScheduler();
 
 /** Constant-time string compare (avoids leaking the token via timing). */
 function safeEqual(a: string, b: string): boolean {

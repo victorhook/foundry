@@ -87,6 +87,8 @@ function load() {
     programs: [],
     notes: [],
     painNotes: [],
+    reminders: [],
+    push: { loaded: false, configured: false, publicKey: "", permission: "default", subscribed: false },
     goals: [],
     foods: [],
     meals: [],
@@ -3157,7 +3159,7 @@ function deleteNoteById(id) {
 }
 
 /* ============ Pain notes (standalone: log body-part pain levels anytime) ============ */
-function openPain() { go("pain"); }
+function openPain() { go("pain"); loadPushState(); }
 function newPainNote() {
   state.painNoteEdit = { id: null, at: Date.now(), note: "", items: [], newOpen: false, newText: "" };
   go("painedit");
@@ -3222,6 +3224,151 @@ function painChips(items) {
     .join("");
 }
 
+/* ---- Reminders (Web Push): remind me to log pain, per weekday ---- */
+// VAPID public keys are URL-safe base64; the subscribe() API wants a Uint8Array.
+function urlB64ToUint8(base64) {
+  const pad = "=".repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) { out[i] = raw.charCodeAt(i); }
+  return out;
+}
+function pushSupported() {
+  return typeof window !== "undefined" && "serviceWorker" in navigator &&
+    "PushManager" in window && typeof Notification !== "undefined";
+}
+async function loadPushState() {
+  const p = state.push;
+  try {
+    const cfg = await apiGet("/api/push");
+    p.configured = !!cfg.configured;
+    p.publicKey = cfg.publicKey || "";
+  } catch (e) { /* leave defaults */ }
+  p.permission = typeof Notification !== "undefined" ? Notification.permission : "denied";
+  if (pushSupported()) {
+    try {
+      // Time-box: serviceWorker.ready can hang if the SW hasn't activated yet;
+      // we still want the reminders UI to render (defaulting to "not subscribed").
+      const reg = (await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, rej) => setTimeout(() => rej(new Error("sw-timeout")), 2000)),
+      ])) as ServiceWorkerRegistration;
+      p.subscribed = !!(await reg.pushManager.getSubscription());
+    } catch (e) { /* SW not ready / unsupported — treat as not subscribed */ }
+  }
+  p.loaded = true;
+  render();
+}
+async function enablePush() {
+  if (!pushSupported()) { toast("Notifications aren't supported on this device"); return; }
+  let perm = Notification.permission;
+  if (perm === "default") { perm = await Notification.requestPermission(); }
+  state.push.permission = perm;
+  if (perm !== "granted") { toast("Notifications are blocked"); render(); return; }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8(state.push.publicKey),
+      });
+    }
+    await apiPost("/api/push", sub.toJSON());
+    state.push.subscribed = true;
+    toast("Reminders enabled ✓");
+  } catch (e) { toast("Couldn't enable notifications"); }
+  render();
+}
+async function disablePush() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) { await apiDelete("/api/push", { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); }
+  } catch (e) { /* ignore */ }
+  state.push.subscribed = false;
+  toast("Reminders off on this device");
+  render();
+}
+async function sendTestPush() {
+  try {
+    const r = await apiPost("/api/push/test", {});
+    toast(r.sent ? "Test sent ✓ — check your notifications" : "No devices subscribed");
+  } catch (e) { toast("Test failed"); }
+}
+async function addReminder() {
+  try {
+    const r = await apiPost("/api/reminders", { days: 0x7f, time: "20:00", enabled: true });
+    state.reminders.push(r);
+    state.reminders.sort((a, b) => (a.time < b.time ? -1 : 1));
+    render();
+  } catch (e) { toast("Couldn't add reminder"); }
+}
+function toggleReminderDay(id, bit) {
+  const r = state.reminders.find((x) => x.id === id);
+  if (!r) { return; }
+  r.days ^= bit;
+  render();
+  apiPost("/api/reminders", { id, days: r.days }).catch(() => {});
+}
+function setReminderTime(id, time) {
+  const r = state.reminders.find((x) => x.id === id);
+  if (!r) { return; }
+  r.time = time;
+  apiPost("/api/reminders", { id, time }).catch(() => {});  // input handler → no re-render
+}
+function toggleReminderEnabled(id) {
+  const r = state.reminders.find((x) => x.id === id);
+  if (!r) { return; }
+  r.enabled = !r.enabled;
+  render();
+  apiPost("/api/reminders", { id, enabled: r.enabled }).catch(() => {});
+}
+function deleteReminderById(id) {
+  apiDelete("/api/reminders", { id }).catch(() => {});
+  state.reminders = state.reminders.filter((x) => x.id !== id);
+  render();
+}
+
+// The reminders block on the Pain screen. Hidden unless the server has VAPID
+// keys configured (pushConfigured). Mon-first weekday toggles map onto the
+// getDay() bitmask (Sun=bit 0).
+const REM_DAYS = [["M", 2], ["T", 4], ["W", 8], ["T", 16], ["F", 32], ["S", 64], ["S", 1]];
+function remindersSection() {
+  const p = state.push;
+  if (!p.loaded || !p.configured) { return ""; }
+  let control;
+  if (p.permission === "denied") {
+    control = `<div class="rem-note">Notifications are blocked — enable them in your browser/site settings, then reopen this screen.</div>`;
+  } else if (!p.subscribed) {
+    control = `<button class="add-ex-btn" data-act="push-enable">🔔  Enable reminders on this device</button>`;
+  } else {
+    control = `<div class="rem-on">
+      <span class="rem-on-lbl">🔔 Reminders on (this device)</span>
+      <span class="rem-on-actions">
+        <button class="mini-chip" data-act="push-test">Send test</button>
+        <button class="mini-chip" data-act="push-disable">Turn off</button>
+      </span>
+    </div>`;
+  }
+  const cards = (state.reminders || []).map((r) => `<div class="rem-card${r.enabled ? "" : " off"}">
+    <div class="rem-top">
+      <input class="rem-time tnum" type="time" value="${r.time}" data-act="rem-time" data-id="${r.id}" aria-label="Reminder time">
+      <span class="rem-actions">
+        <button class="mini-chip ${r.enabled ? "active" : ""}" data-act="rem-toggle" data-id="${r.id}">${r.enabled ? "On" : "Off"}</button>
+        <button class="set-del" data-act="rem-del" data-id="${r.id}" aria-label="Delete reminder">×</button>
+      </span>
+    </div>
+    <div class="rem-days">${REM_DAYS.map(([lbl, bit]) =>
+      `<button class="rem-day ${(r.days & bit) ? "on" : ""}" data-act="rem-day" data-id="${r.id}" data-bit="${bit}">${lbl}</button>`).join("")}</div>
+  </div>`).join("");
+  return `<div class="section-head" style="margin-top:26px;"><span class="eyebrow">Reminders</span></div>
+    ${control}
+    ${state.reminders && state.reminders.length ? `<div class="rem-list">${cards}</div>` : ""}
+    <button class="add-ex-btn" data-act="rem-add" style="margin-top:10px;">＋  Add reminder</button>`;
+}
+
 function viewPain() {
   const list = state.painNotes || [];
   const cards = list.map((p) => {
@@ -3242,6 +3389,7 @@ function viewPain() {
       <div class="section-head"><span class="eyebrow">Pain log</span></div>
       ${body}
       <button class="add-ex-btn" data-act="new-painnote" style="margin-top:14px;">＋  Log pain</button>
+      ${remindersSection()}
     </main>
   </div>`;
 }
@@ -4197,6 +4345,20 @@ app.addEventListener("click", (e) => {
       break;
     }
 
+    /* ---- Reminders / push ---- */
+    case "push-enable": enablePush(); break;
+    case "push-disable": disablePush(); break;
+    case "push-test": sendTestPush(); break;
+    case "rem-add": addReminder(); break;
+    case "rem-day": toggleReminderDay(t.dataset.id, parseInt(t.dataset.bit, 10)); break;
+    case "rem-toggle": toggleReminderEnabled(t.dataset.id); break;
+    case "rem-del": {
+      const id = t.dataset.id;
+      state.confirm = { title: "Delete reminder?", ok: "Delete", danger: true, onOk: () => deleteReminderById(id) };
+      render();
+      break;
+    }
+
     /* ---- Goals ---- */
     case "goals": openGoals(); break;
     case "new-goal": openGoalEdit(null); break;
@@ -4276,6 +4438,7 @@ app.addEventListener("input", (e) => {
   else if (act === "note-text") { state.noteEdit.text = t.value; }
   else if (act === "painnote-note-text") { state.painNoteEdit.note = t.value; }
   else if (act === "pain-new-text") { state.painNoteEdit.newText = t.value; }
+  else if (act === "rem-time" && t.value) { setReminderTime(t.dataset.id, t.value); }
   else if (act === "wdate" && t.value) {
     const [y, m, d] = t.value.split("-").map(Number);
     state.active.startedAt = new Date(y, m - 1, d, 12).getTime();
@@ -4358,6 +4521,7 @@ async function boot() {
     state.programs = data.programs || [];
     state.notes = data.notes || [];
     state.painNotes = data.painNotes || [];
+    state.reminders = data.reminders || [];
     state.goals = data.goals || [];
     state.foods = data.foods || [];
     state.meals = data.meals || [];

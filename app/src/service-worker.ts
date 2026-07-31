@@ -45,3 +45,44 @@ sw.addEventListener('fetch', (event) => {
 		caches.match(request).then((cached) => cached || fetch(request))
 	);
 });
+
+// --- Web Push: show reminder notifications, and focus/open the app on tap. ---
+type PushData = { title: string; body: string; url?: string; tag?: string };
+
+sw.addEventListener('push', (event) => {
+	let data: PushData = { title: 'Foundry', body: 'Reminder', url: '/', tag: 'foundry' };
+	try {
+		if (event.data) {
+			data = { ...data, ...(event.data.json() as Partial<PushData>) };
+		}
+	} catch {
+		/* non-JSON payload — keep defaults */
+	}
+	event.waitUntil(
+		sw.registration.showNotification(data.title, {
+			body: data.body,
+			icon: '/icon-192.png',
+			badge: '/badge-72.png',
+			tag: data.tag,
+			data: { url: data.url || '/' }
+		})
+	);
+});
+
+sw.addEventListener('notificationclick', (event) => {
+	event.notification.close();
+	const url = (event.notification.data && event.notification.data.url) || '/';
+	event.waitUntil(
+		(async () => {
+			const clients = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
+			for (const c of clients) {
+				// Reuse an already-open Foundry tab if there is one.
+				if ('focus' in c) {
+					await c.focus();
+					return;
+				}
+			}
+			await sw.clients.openWindow(url);
+		})()
+	);
+});

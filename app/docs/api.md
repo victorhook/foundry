@@ -39,6 +39,7 @@ curl -H "Authorization: Bearer $API_TOKEN" https://<your-host>/api/data
 {
   "workouts":    [ /* each with entries, sets, per-exercise pain & notes */ ],
   "painNotes":   [ /* standalone pain logs: {at, note, items:[{cat,level}]} */ ],
+  "reminders":   [ /* pain-logging push reminders: {days, time, enabled} */ ],
   "exercises":   [ ... ],
   "notes":       [ ... ],
   "goals":       [ ... ],

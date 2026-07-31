@@ -410,7 +410,27 @@ const migrations: Array<(d: Database.Database) => void> = [
 			level INTEGER NOT NULL,
 			ord INTEGER NOT NULL DEFAULT 0
 		);
-		CREATE INDEX IF NOT EXISTS idx_pain_note_item_note ON pain_note_item(note_id)`)
+		CREATE INDEX IF NOT EXISTS idx_pain_note_item_note ON pain_note_item(note_id)`),
+
+	// vN -> vN+1: Web Push reminders. push_subscription = one row per device/browser
+	// (endpoint is the natural key). reminder = a per-weekday schedule; `days` is a
+	// 7-bit mask where bit i is set when it fires on JS getDay()===i (0=Sun..6=Sat).
+	// `last_fired` (YYYY-MM-DD, local) dedupes so a reminder fires at most once/day.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS push_subscription (
+			endpoint TEXT PRIMARY KEY,
+			p256dh TEXT NOT NULL,
+			auth TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS reminder (
+			id TEXT PRIMARY KEY,
+			days INTEGER NOT NULL,
+			time TEXT NOT NULL,               -- "HH:MM" local
+			enabled INTEGER NOT NULL DEFAULT 1,
+			last_fired TEXT,                  -- YYYY-MM-DD, local
+			created_at INTEGER NOT NULL
+		)`)
 ];
 
 function migrate() {
@@ -857,6 +877,77 @@ export function deletePainNote(id: string) {
 	})();
 }
 
+/* ---- Web Push: subscriptions + reminders ---- */
+export type PushSubscriptionRow = { endpoint: string; p256dh: string; auth: string };
+
+export function getPushSubscriptions(): PushSubscriptionRow[] {
+	return db
+		.prepare('SELECT endpoint, p256dh, auth FROM push_subscription')
+		.all() as PushSubscriptionRow[];
+}
+
+export function savePushSubscription(sub: PushSubscriptionRow) {
+	db.prepare(
+		`INSERT INTO push_subscription (endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth`
+	).run(sub.endpoint, sub.p256dh, sub.auth, Date.now());
+}
+
+export function deletePushSubscription(endpoint: string) {
+	db.prepare('DELETE FROM push_subscription WHERE endpoint = ?').run(endpoint);
+}
+
+export type Reminder = {
+	id: string;
+	days: number;
+	time: string;
+	enabled: boolean;
+	lastFired: string | null;
+	createdAt: number;
+};
+
+export function getReminders(): Reminder[] {
+	return db
+		.prepare('SELECT id, days, time, enabled, last_fired, created_at FROM reminder ORDER BY time')
+		.all()
+		.map((r: any) => ({
+			id: r.id,
+			days: r.days,
+			time: r.time,
+			enabled: !!r.enabled,
+			lastFired: r.last_fired ?? null,
+			createdAt: r.created_at
+		}));
+}
+
+export function createReminder(input: { days: number; time: string; enabled?: boolean }) {
+	const id = uid();
+	db.prepare(
+		'INSERT INTO reminder (id, days, time, enabled, last_fired, created_at) VALUES (?, ?, ?, ?, NULL, ?)'
+	).run(id, input.days, input.time, input.enabled === false ? 0 : 1, Date.now());
+	return getReminders().find((r) => r.id === id) || null;
+}
+
+export function updateReminder(
+	id: string,
+	patch: { days?: number; time?: string; enabled?: boolean; lastFired?: string | null }
+) {
+	const cur = db.prepare('SELECT days, time, enabled, last_fired FROM reminder WHERE id = ?').get(id) as any;
+	if (!cur) { return null; }
+	db.prepare('UPDATE reminder SET days = ?, time = ?, enabled = ?, last_fired = ? WHERE id = ?').run(
+		patch.days != null ? patch.days : cur.days,
+		patch.time !== undefined ? patch.time : cur.time,
+		patch.enabled !== undefined ? (patch.enabled ? 1 : 0) : cur.enabled,
+		patch.lastFired !== undefined ? patch.lastFired : cur.last_fired,
+		id
+	);
+	return getReminders().find((r) => r.id === id) || null;
+}
+
+export function deleteReminder(id: string) {
+	db.prepare('DELETE FROM reminder WHERE id = ?').run(id);
+}
+
 /* ---- AI chats (conversations with the local `claude` CLI) ---- */
 export type ChatTool = { name: string; detail: string };
 
@@ -1169,6 +1260,7 @@ export function getAllData() {
 		albums: getAlbums(),
 		photos: getPhotos(),
 		steps: getStepDays(),
+		reminders: getReminders(),
 		fitConnected: isFitConnected()
 	};
 }

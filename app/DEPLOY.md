@@ -171,6 +171,37 @@ The redirect URI is auto-derived from the request origin (via adapter-node's
 `ORIGIN`). If yours differs, pin it with `GOOGLE_REDIRECT_URI` — it must match the
 console entry byte-for-byte.
 
+## Pain reminders (Web Push, optional)
+
+Foundry can send push notifications reminding you to log pain, on a per-weekday
+schedule — even when the app is closed (installed PWA). It's opt-in: with the
+VAPID vars below unset, the reminders UI simply doesn't appear.
+
+1. Generate one VAPID keypair (once):
+
+```bash
+cd /opt/foundry && npx web-push generate-vapid-keys
+```
+
+2. Add the keys to `/opt/foundry/.env`:
+
+```
+VAPID_PUBLIC_KEY=<public key>
+VAPID_PRIVATE_KEY=<private key>
+VAPID_SUBJECT=mailto:you@example.com
+```
+
+3. `sudo systemctl restart foundry`. Reminders fire in your local timezone —
+   make sure `TZ` is set in `.env` (e.g. `TZ=Europe/Stockholm`).
+
+4. On your phone (installed PWA, over HTTPS): open **Pain → Reminders →
+   Enable reminders on this device**, allow the permission prompt, then add one
+   or more reminders (weekdays + time). Use **Send test** to confirm delivery.
+
+The scheduler runs in-process (a per-minute check inside the app process, which
+`Restart=always` keeps alive) — no extra systemd unit needed. Subscriptions live
+in the DB (`push_subscription`), so they're covered by the nightly DB backup.
+
 ## Schema changes / migrations
 
 Schema evolves via a built-in runner (SQLite `user_version`) in `src/lib/server/db.ts`.

@@ -53,6 +53,9 @@ components:
         painNotes:
           type: array
           items: { $ref: "#/components/schemas/PainNote" }
+        reminders:
+          type: array
+          items: { $ref: "#/components/schemas/Reminder" }
         goals:
           type: array
           items: { $ref: "#/components/schemas/Goal" }
@@ -206,6 +209,20 @@ components:
             properties:
               cat: { type: string, description: Body area, e.g. "Knees". }
               level: { type: integer, description: Severity 1–10. }
+        createdAt: { type: integer, format: int64 }
+    Reminder:
+      type: object
+      description: A per-weekday pain-logging reminder delivered via Web Push.
+      properties:
+        id: { type: string }
+        days:
+          type: integer
+          description: >
+            7-bit weekday mask; bit i is set when it fires on that weekday, where
+            i matches JavaScript getDay() (0=Sunday … 6=Saturday).
+        time: { type: string, description: 'Local time "HH:MM" (24h).' }
+        enabled: { type: boolean }
+        lastFired: { type: [string, "null"], description: "Last fire date, YYYY-MM-DD, or null." }
         createdAt: { type: integer, format: int64 }
     Goal:
       type: object
