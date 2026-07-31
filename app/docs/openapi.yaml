@@ -50,6 +50,9 @@ components:
         notes:
           type: array
           items: { $ref: "#/components/schemas/Note" }
+        painNotes:
+          type: array
+          items: { $ref: "#/components/schemas/PainNote" }
         goals:
           type: array
           items: { $ref: "#/components/schemas/Goal" }
@@ -184,6 +187,26 @@ components:
         day: { type: string, description: "Date, YYYY-MM-DD." }
         text: { type: string }
         createdAt: { type: integer, format: int64, description: Epoch milliseconds. }
+    PainNote:
+      type: object
+      description: >
+        A standalone pain log (independent of workouts): a timestamped entry with
+        one or more body areas each rated 1–10, plus an optional free-text note.
+      properties:
+        id: { type: string }
+        at:
+          type: integer
+          format: int64
+          description: When the pain was logged, Unix epoch milliseconds.
+        note: { type: string, description: Optional free-text note. }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              cat: { type: string, description: Body area, e.g. "Knees". }
+              level: { type: integer, description: Severity 1–10. }
+        createdAt: { type: integer, format: int64 }
     Goal:
       type: object
       properties:

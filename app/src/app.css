@@ -625,6 +625,12 @@
   }
   .pain-chip .sev { font-size: 0.7rem; font-weight: 800; }
 
+  /* Pain-note editor: one heat-scale row per selected area */
+  .pain-item { margin-top: 12px; }
+  .pain-item:first-child { margin-top: 0; }
+  .pain-item-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; font-size: 0.9rem; }
+  .pain-item .rpe-scale { width: 100%; }
+
   .date-input {
     width: 100%; background: var(--surface); border: 1px solid var(--line);
     border-radius: 12px; color: var(--text); padding: 13px 14px;
@@ -1058,9 +1064,52 @@
     margin: 0 0 9px; overflow-x: auto;
   }
   .chat-md pre code { background: none; border: none; padding: 0; font-size: 0.82rem; }
+  /* Headings are capped at h3 by the renderer — inside a bubble they're emphasis,
+     not document structure, so keep them close to body size. */
+  .chat-md h3, .chat-md h4 { font-size: 0.95rem; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .chat-md h4 { color: var(--muted); font-size: 0.88rem; }
+  .chat-md em { font-style: italic; }
+  .chat-md del { opacity: 0.6; }
+  .chat-md a { color: var(--accent); text-decoration: underline; }
+  .chat-md hr { border: none; border-top: 1px solid var(--line); margin: 10px 0; }
+  .chat-md blockquote {
+    margin: 0 0 9px; padding: 2px 0 2px 10px;
+    border-left: 2px solid var(--line); color: var(--muted);
+  }
+  /* Tables scroll themselves rather than widening the page. */
+  .chat-md .md-table { overflow-x: auto; margin: 0 0 9px; }
+  .chat-md table { border-collapse: collapse; font-size: 0.84rem; }
+  .chat-md th, .chat-md td {
+    border: 1px solid var(--line); padding: 5px 8px;
+    text-align: left; white-space: nowrap;
+  }
+  .chat-md th { background: var(--surface-2); font-weight: 700; }
 
-  /* One chip per tool call, above the reply text — a visible trace of what the
-     agent actually did on the box. */
+  /* A turn can run twenty-odd commands. Default to one summary line — tapping it
+     reveals the per-command chips, which are for auditing, not for reading. */
+  .tool-trace {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    margin-bottom: 9px; padding: 5px 10px;
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 999px; color: var(--muted);
+    font-size: 0.75rem; text-align: left;
+  }
+  .tool-trace .tt-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-trace .tt-caret { flex: 0 0 auto; opacity: 0.7; }
+  .tool-trace:active { background: var(--surface-3); }
+  .tool-trace.static { cursor: default; }
+  /* Mid-turn: counts plus the command running right now, so it reads as progress. */
+  .chat-live-trace {
+    display: flex; align-items: baseline; gap: 6px;
+    font-size: 0.75rem; color: var(--muted); margin-bottom: 9px;
+  }
+  .chat-live-trace:empty { display: none; }
+  .chat-live-trace .tt-now {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* One chip per tool call — shown only when the trace above is expanded. */
   .chat-tools { display: flex; flex-direction: column; gap: 5px; }
   .chat-tools:not(:empty) { margin-bottom: 10px; }
   .tool-chip {

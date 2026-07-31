@@ -9,6 +9,7 @@ import {
 } from '$lib/server/db';
 import { runTurn, WORKSPACE } from '$lib/server/claude';
 import { writeSnapshot } from '$lib/server/snapshot-write';
+import { logTurn } from '$lib/server/chatlog';
 import type { RequestHandler } from './$types';
 
 // One conversational turn, streamed to the browser as SSE. POST (not EventSource)
@@ -82,6 +83,9 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 			let acc = '';
 			const tools: ChatTool[] = [];
 			let persisted = false;
+			let outcome = 'interrupted';
+			let failure: string | null = null;
+			const startedAt = Date.now();
 
 			// Refresh the agent's data export so it can answer questions about the
 			// owner's training without a DB connection or an API token. Best-effort:
@@ -108,6 +112,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 					if (ev.type === 'done') {
 						addChatMessage(chatId, 'assistant', ev.text, ev.tools);
 						persisted = true;
+						outcome = 'ok';
 						send({ type: 'done', text: ev.text, tools: ev.tools });
 						continue;
 					}
@@ -117,6 +122,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 							addChatMessage(chatId, 'assistant', acc, tools);
 						}
 						persisted = true;
+						outcome = 'error';
+						failure = ev.message;
 						send({ type: 'error', message: ev.message });
 					}
 				}
@@ -128,6 +135,17 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 				if (!persisted && acc.trim()) {
 					addChatMessage(chatId, 'assistant', acc, tools);
 				}
+				// Full command list to disk — the UI only shows a summary now.
+				logTurn({
+					chatId,
+					cliSession: getChatCliSession(chatId),
+					outcome,
+					prompt: text,
+					reply: acc,
+					tools,
+					ms: Date.now() - startedAt,
+					error: failure
+				});
 				clearInterval(beat);
 				busy.delete(chatId);
 				closed = true;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSnapshot, mondayOf, recentDays } from './snapshot';
+import { buildSnapshot, mondayOf, recentDays, enrichWorkout } from './snapshot';
 
 // Date handling is the part most likely to produce a confidently wrong answer:
 // "summarize this week" hinges on which Monday the agent thinks it is.
@@ -76,12 +76,20 @@ describe('buildSnapshot', () => {
 		expect(s.today).toBe('2026-07-23');
 	});
 
-	it('passes the collections through untouched', () => {
+	it('passes untransformed collections through by reference', () => {
 		const s = buildSnapshot(base);
-		expect(s.workouts).toBe(base.workouts);
 		expect(s.exercises).toBe(base.exercises);
 		expect(s.bodyWeights).toBe(base.bodyWeights);
 		expect(s.counts.photos).toBe(3);
+	});
+
+	it('enriches workouts rather than passing them through raw', () => {
+		const s = buildSnapshot(base);
+		expect(s.workouts).not.toBe(base.workouts);
+		// The fields that exist so the agent never shells out for them.
+		expect(s.workouts[0]).toMatchObject({ day: '2026-07-22', weekday: 'Wed' });
+		expect(s.workouts[0]).toHaveProperty('weekStartMonday');
+		expect(s.workouts[0]).toHaveProperty('exercises');
 	});
 
 	// The agent decides whether to query with jq or read the file wholesale based
@@ -117,16 +125,168 @@ describe('buildSnapshot', () => {
 		expect(s.nutrition.days.map((d) => d.day)).toEqual(['2026-07-20', '2026-07-22']);
 	});
 
-	it('explains units and the date fields in the readme the agent reads first', () => {
+	it('tells the agent up front that the work is already done', () => {
 		const readme = buildSnapshot(base)._readme;
 		expect(readme).toContain('weekStartMonday');
-		expect(readme).toContain('epoch milliseconds');
-		expect(readme).toContain('"sec"'); // the sec-as-load gotcha
-		expect(readme).toMatch(/not zero/); // absent ≠ zero
+		expect(readme).toContain('PRE-COMPUTED');
+		expect(readme).toContain('ALREADY RESOLVED'); // no exerciseId lookups
+		expect(readme).toContain('"sec"');            // the sec-as-load gotcha
+		expect(readme).toMatch(/not zero/);           // absent != zero
+	});
+
+	// The recipes are the difference between a one-command answer and fifteen.
+	it('ships ready-made queries for the common questions', () => {
+		const r = buildSnapshot(base)._recipes;
+		expect(Object.keys(r)).toContain('thisWeek');
+		expect(Object.keys(r)).toContain('oneExerciseOverTime');
+		expect(Object.keys(r)).toContain('weeklyVolume');
+		for (const q of Object.values(r)) {
+			expect(q).toContain('foundry-data.json');
+		}
 	});
 
 	it('tolerates a profile with no targets set', () => {
 		const s = buildSnapshot({ ...base, profile: { dob: null, height: null } });
 		expect(s.nutrition.targets).toBeNull();
+	});
+});
+
+// Enrichment exists to stop the agent shelling out for date maths and id joins,
+// so the derived fields have to be right — a wrong volume is worse than none.
+describe('enrichWorkout', () => {
+	const bench = { id: 'b', name: 'Bench Press', type: 'strength', unit: 'kg', bodyweight: false, muscles: ['Chest'] };
+	const plank = { id: 'p', name: 'Plank', type: 'strength', unit: 'sec', bodyweight: true, muscles: ['Core'] };
+	const pullup = { id: 'u', name: 'Pull-up', type: 'strength', unit: 'kg', bodyweight: true, muscles: ['Back'] };
+	const run = { id: 'run', name: 'Run', type: 'cardio', unit: 'kg', bodyweight: false, muscles: ['Cardio'] };
+	const exById = new Map([bench, plank, pullup, run].map((e) => [e.id, e]));
+
+	// 2026-07-27T16:00:00Z — a Monday; 18:00 in Stockholm (UTC+2 in July).
+	const monday = Date.UTC(2026, 6, 27, 16, 0);
+
+	it('resolves calendar fields in the user timezone, not UTC', () => {
+		const w = enrichWorkout({ id: 'w', startedAt: monday, entries: [] }, exById, 'Europe/Stockholm');
+		expect(w.day).toBe('2026-07-27');
+		expect(w.weekday).toBe('Mon');
+		expect(w.time).toBe('18:00');
+		expect(w.weekStartMonday).toBe('2026-07-27');
+	});
+
+	it('resolves exercise names so no id lookup is needed', () => {
+		const w = enrichWorkout(
+			{ id: 'w', startedAt: monday, entries: [{ exerciseId: 'b', sets: [{ reps: 8, weight: 80 }] }] },
+			exById,
+			'UTC'
+		);
+		expect(w.exercises[0].name).toBe('Bench Press');
+		expect(w.exercises[0].muscles).toEqual(['Chest']);
+		expect(w.exercises[0].setCount).toBe(1);
+	});
+
+	it('sums load across sets and across exercises', () => {
+		const w = enrichWorkout(
+			{
+				id: 'w',
+				startedAt: monday,
+				entries: [
+					{ exerciseId: 'b', sets: [{ reps: 8, weight: 80 }, { reps: 8, weight: 82.5 }] },
+					{ exerciseId: 'b', sets: [{ reps: 5, weight: 90 }] }
+				]
+			},
+			exById,
+			'UTC'
+		);
+		// 640 + 660 = 1300, then 450
+		expect(w.exercises[0].volumeKg).toBe(1300);
+		expect(w.exercises[1].volumeKg).toBe(450);
+		expect(w.volumeKg).toBe(1750);
+	});
+
+	it('reports no volume for a seconds-based hold', () => {
+		const w = enrichWorkout(
+			{ id: 'w', startedAt: monday, entries: [{ exerciseId: 'p', sets: [{ reps: 1, weight: 60 }] }] },
+			exById,
+			'UTC'
+		);
+		// 60 is seconds, not kilograms — summing it would invent a 60 kg lift.
+		expect(w.exercises[0].volumeKg).toBeNull();
+		expect(w.volumeKg).toBeNull();
+	});
+
+	it('reports no volume for a bodyweight exercise', () => {
+		const w = enrichWorkout(
+			{ id: 'w', startedAt: monday, entries: [{ exerciseId: 'u', sets: [{ reps: 10, weight: 0 }] }] },
+			exById,
+			'UTC'
+		);
+		expect(w.exercises[0].volumeKg).toBeNull();
+	});
+
+	it('totals cardio duration and distance instead of volume', () => {
+		const w = enrichWorkout(
+			{ id: 'w', startedAt: monday, entries: [{ exerciseId: 'run', sets: [{ duration: 28, distance: 5.2 }] }] },
+			exById,
+			'UTC'
+		);
+		expect(w.durationMin).toBe(28);
+		expect(w.distanceKm).toBe(5.2);
+		expect(w.volumeKg).toBeNull();
+	});
+
+	it('skips sets with missing numbers rather than counting them as zero', () => {
+		const w = enrichWorkout(
+			{ id: 'w', startedAt: monday, entries: [{ exerciseId: 'b', sets: [{ reps: 8, weight: 80 }, { reps: 8 }] }] },
+			exById,
+			'UTC'
+		);
+		expect(w.exercises[0].volumeKg).toBe(640);
+	});
+
+	it('keeps an unknown exercise id visible instead of dropping the entry', () => {
+		const w = enrichWorkout(
+			{ id: 'w', startedAt: monday, entries: [{ exerciseId: 'gone', sets: [] }] },
+			exById,
+			'UTC'
+		);
+		expect(w.exercises[0].name).toBe('gone');
+		expect(w.exercises[0].volumeKg).toBeNull();
+	});
+
+	it('carries notes and pain through', () => {
+		const w = enrichWorkout(
+			{
+				id: 'w', startedAt: monday, notes: 'felt strong', feel: 8, energy: 4,
+				pains: [{ cat: 'Knees', level: 3 }],
+				entries: [{ exerciseId: 'b', sets: [], note: 'right side weaker', pain: { cat: 'Shoulders', level: 2 } }]
+			},
+			exById,
+			'UTC'
+		);
+		expect(w.notes).toBe('felt strong');
+		expect(w.feel).toBe(8);
+		expect(w.pains).toEqual([{ cat: 'Knees', level: 3 }]);
+		expect(w.exercises[0].note).toBe('right side weaker');
+		expect(w.exercises[0].pain).toEqual({ cat: 'Shoulders', level: 2 });
+	});
+});
+
+describe('buildSnapshot week filtering', () => {
+	it('counts only this week, using the pre-computed Monday', () => {
+		const ex = [{ id: 'b', name: 'Bench', type: 'strength', unit: 'kg' }];
+		const mk = (ts: number) => ({ id: 'w' + ts, startedAt: ts, routineName: 'Gym', entries: [] });
+		const s = buildSnapshot({
+			now: Date.UTC(2026, 6, 30, 12),   // Thursday
+			timezone: 'UTC',
+			exercises: ex,
+			workouts: [
+				mk(Date.UTC(2026, 6, 27, 12)),  // Mon, this week
+				mk(Date.UTC(2026, 6, 29, 12)),  // Wed, this week
+				mk(Date.UTC(2026, 6, 24, 12))   // previous Friday
+			],
+			bodyWeights: [], steps: [], notes: [], goals: [],
+			profile: {}, foodLog: {}, counts: {}
+		});
+		expect(s.weekStartMonday).toBe('2026-07-27');
+		expect(s.counts.workoutsThisWeek).toBe(2);
+		expect(s.counts.workouts).toBe(3);
 	});
 });

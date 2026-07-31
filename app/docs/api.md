@@ -38,6 +38,7 @@ curl -H "Authorization: Bearer $API_TOKEN" https://<your-host>/api/data
 ```jsonc
 {
   "workouts":    [ /* each with entries, sets, per-exercise pain & notes */ ],
+  "painNotes":   [ /* standalone pain logs: {at, note, items:[{cat,level}]} */ ],
   "exercises":   [ ... ],
   "notes":       [ ... ],
   "goals":       [ ... ],

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { pushState, replaceState } from '$app/navigation';
 import { page } from '$app/stores';
+import { mdToHtml } from '$lib/markdown';
 // Ported from the POC. Server holds the source of truth (exercises, pain
 // categories, workouts); localStorage only keeps a draft of the in-progress
 // session + current view so an accidental refresh at the gym isn't lost.
@@ -85,6 +86,7 @@ function load() {
     templates: [],
     programs: [],
     notes: [],
+    painNotes: [],
     goals: [],
     foods: [],
     meals: [],
@@ -115,6 +117,7 @@ function load() {
     chatDraft: "",
     chatStream: null,
     chatError: null,
+    chatToolsOpen: {},
   };
 }
 
@@ -950,6 +953,8 @@ function render() {
   else if (state.view === "progedit") { html = viewProgramEdit(); }
   else if (state.view === "notes") { html = viewNotes(); }
   else if (state.view === "noteedit") { html = viewNoteEdit(); }
+  else if (state.view === "pain") { html = viewPain(); }
+  else if (state.view === "painedit") { html = viewPainEdit(); }
   else if (state.view === "goals") { html = viewGoals(); }
   else if (state.view === "goaledit") { html = viewGoalEdit(); }
   else if (state.view === "exinfo") { html = viewExInfo(); }
@@ -1005,6 +1010,7 @@ function buildDrawer() {
       ${item("nutrition", "\u{1F34E}", "Nutrition")}
       ${item("history", "\u{1F4D6}", "History")}
       ${item("notes", "\u{1F4DD}", "Notes")}
+      ${item("pain", "\u{1FA79}", "Pain")}
       ${item("programs", "\u{1FA79}", "Programs")}
       ${item("photos", "\u{1F5BC}️", "Photos")}
       ${item("profile", "\u{1F464}", "Profile")}
@@ -1027,6 +1033,7 @@ function buildDrawer() {
     else if (nav === "goals") { openGoals(); }
     else if (nav === "programs") { openPrograms(); }
     else if (nav === "notes") { openNotes(); }
+    else if (nav === "pain") { openPain(); }
     else if (nav === "chats") { openChats(); }
     else if (nav === "photos") { state.photoTag = null; go("photos"); }
     else { go(nav); }
@@ -3149,6 +3156,142 @@ function deleteNoteById(id) {
   history.back();
 }
 
+/* ============ Pain notes (standalone: log body-part pain levels anytime) ============ */
+function openPain() { go("pain"); }
+function newPainNote() {
+  state.painNoteEdit = { id: null, at: Date.now(), note: "", items: [], newOpen: false, newText: "" };
+  go("painedit");
+}
+function editPainNote(id) {
+  const p = state.painNotes.find((x) => x.id === id);
+  if (!p) { return; }
+  state.painNoteEdit = {
+    id: p.id, at: p.at, note: p.note || "",
+    items: (p.items || []).map((it) => ({ cat: it.cat, level: it.level })),
+    newOpen: false, newText: "",
+  };
+  go("painedit");
+}
+// Tap a body-part chip: add it (at the default level) or remove it from the draft.
+function togglePainCat(cat) {
+  const e = state.painNoteEdit;
+  const i = e.items.findIndex((it) => it.cat === cat);
+  if (i >= 0) { e.items.splice(i, 1); } else { e.items.push({ cat, level: DEFAULT_PAIN_LEVEL }); }
+  render();
+}
+function setPainItemLevel(cat, level) {
+  const it = state.painNoteEdit.items.find((x) => x.cat === cat);
+  if (it) { it.level = level; render(); }
+}
+function openPainNew() { state.painNoteEdit.newOpen = true; render(); }
+function addPainNew() {
+  const c = addPainCategory(state.painNoteEdit.newText);
+  state.painNoteEdit.newOpen = false;
+  state.painNoteEdit.newText = "";
+  if (c && !state.painNoteEdit.items.some((it) => it.cat === c)) {
+    state.painNoteEdit.items.push({ cat: c, level: DEFAULT_PAIN_LEVEL });
+  }
+  render();
+}
+async function savePainNoteEdit() {
+  const e = state.painNoteEdit;
+  if (!e.items.length && !(e.note || "").trim()) { toast("Add an area or a note first"); return; }
+  let saved;
+  try {
+    saved = await apiPost("/api/pain-notes", {
+      id: e.id || undefined, at: e.at, note: (e.note || "").trim(), items: e.items,
+    });
+  } catch (err) { toast("Couldn't save pain note"); return; }
+  const i = state.painNotes.findIndex((x) => x.id === saved.id);
+  if (i >= 0) { state.painNotes[i] = saved; } else { state.painNotes.push(saved); }
+  state.painNotes.sort((a, b) => b.at - a.at);
+  const wasEditing = !!e.id;
+  state.painNoteEdit = null;
+  history.back();
+  toast(wasEditing ? "Pain note updated ✓" : "Pain note saved ✓");
+}
+function deletePainNoteById(id) {
+  apiDelete("/api/pain-notes", { id }).catch(() => {});
+  state.painNotes = state.painNotes.filter((p) => p.id !== id);
+  history.back();
+}
+
+function painChips(items) {
+  return (items || [])
+    .map((it) => `<span class="pain-chip" style="background:${heatColor(it.level)};color:#14171C;border-color:transparent;">${escAttr(it.cat)} <span class="sev">${it.level}</span></span>`)
+    .join("");
+}
+
+function viewPain() {
+  const list = state.painNotes || [];
+  const cards = list.map((p) => {
+    const t = new Date(p.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    const noteLine = p.note ? `<div class="note-text">${escAttr(p.note)}</div>` : "";
+    return `<button class="note-card" data-act="edit-painnote" data-id="${p.id}">
+      <div class="note-date">${fmtDate(p.at)} · ${t}</div>
+      ${p.items && p.items.length ? `<div class="pain-grid">${painChips(p.items)}</div>` : ""}
+      ${noteLine}
+    </button>`;
+  }).join("");
+  const body = list.length
+    ? `<div class="note-list">${cards}</div>`
+    : `<div class="empty">No pain logged yet. Tap below to record how a body part feels — you can do this anytime.</div>`;
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Home" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">Pain log</span></div>
+      ${body}
+      <button class="add-ex-btn" data-act="new-painnote" style="margin-top:14px;">＋  Log pain</button>
+    </main>
+  </div>`;
+}
+
+function viewPainEdit() {
+  const e = state.painNoteEdit;
+  if (!e) { go("pain"); return ""; }
+  const editing = !!e.id;
+  const selected = new Set(e.items.map((it) => it.cat));
+  const catChips = state.painCategories.map((c) =>
+    `<button class="chip ${selected.has(c) ? "active" : ""}" data-act="pain-toggle-cat" data-cat="${escAttr(c)}">${c}</button>`
+  ).join("");
+  const newHtml = e.newOpen
+    ? inlineNewField("pain-new-text", "pain-new-add", null, e.newText || "", "New area…")
+    : `<button class="chip" data-act="pain-new">+ New</button>`;
+  // A 1-10 scale for each selected area (heat-colored, like the workout pain UI).
+  // Per-area buttons carry data-cat so the handler knows which item to set.
+  const painLevelBtns = (cat, sel) => {
+    let out = "";
+    for (let i = 1; i <= PAIN_MAX; i++) {
+      const on = sel === i;
+      out += `<button class="rpe-btn ${on ? "sel" : ""}" data-act="pain-level" data-cat="${escAttr(cat)}" data-v="${i}" style="${on ? `background:${heatColor(i)};` : ""}">${i}</button>`;
+    }
+    return out;
+  };
+  const scales = e.items.map((it) => `<div class="pain-item">
+    <div class="pain-item-head"><span style="color:${heatColor(it.level)};font-weight:800;">${escAttr(it.cat)}</span><span class="tnum" style="color:var(--muted);">${it.level}/10</span></div>
+    <div class="rpe-scale">${painLevelBtns(it.cat, it.level)}</div>
+  </div>`).join("");
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Pain" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">${editing ? "Edit pain note" : "Log pain"}</span></div>
+      <div class="finish-block">
+        <span class="eyebrow">Areas</span>
+        <div class="chip-row">${catChips}${newHtml}</div>
+      </div>
+      ${scales ? `<div class="finish-block"><span class="eyebrow">Level</span>${scales}</div>` : ""}
+      <div class="finish-block">
+        <span class="eyebrow">Note <span style="color:var(--muted-2);font-weight:600;text-transform:none;letter-spacing:0;">· optional</span></span>
+        <textarea class="notes" data-act="painnote-note-text" placeholder="Anything to remember (what triggered it, how it feels)…">${escAttr(e.note || "")}</textarea>
+      </div>
+    </main>
+    <div class="footer">
+      ${editing ? `<button class="btn btn-ghost" data-act="del-painnote" data-id="${e.id}">Delete</button>` : ""}
+      <button class="btn btn-primary" data-act="save-painnote">${editing ? "Save" : "Save pain note"}</button>
+    </div>
+  </div>`;
+}
+
 /* ---- Voice dictation (Web Speech API — Android Chrome) ---- */
 let recog = null, recognizing = false, dictateBase = "", dictateFinal = "";
 function speechSupported() {
@@ -3386,9 +3529,9 @@ function onChatDelta(text) {
 function onChatTool(ev) {
   if (!state.chatStream) { return; }
   state.chatStream.tools.push({ name: ev.name, detail: ev.detail });
-  const host = document.querySelector(".chat-live .chat-tools");
+  const host = document.querySelector(".chat-live .chat-live-trace");
   if (host) {
-    host.innerHTML = toolChips(state.chatStream.tools);
+    host.innerHTML = liveTrace(state.chatStream.tools);
     chatScrollToEnd();
   }
 }
@@ -3441,40 +3584,6 @@ function autoGrow(ta) {
   ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
 }
 
-/* --- minimal markdown → HTML (escape first, then a few safe patterns) --- */
-function inlineMd(s) {
-  return escAttr(s)
-    .replace(/`([^`]+)`/g, (m, c) => `<code>${c}</code>`)
-    .replace(/\*\*([^*]+)\*\*/g, (m, c) => `<strong>${c}</strong>`);
-}
-
-function mdToHtml(text) {
-  const out = [];
-  // Split on fenced code blocks so their contents are never treated as markup.
-  const parts = String(text).split(/```/);
-  parts.forEach((part, i) => {
-    if (i % 2 === 1) {
-      // Odd segments are inside fences; drop an optional language tag line.
-      const body = part.replace(/^[a-zA-Z0-9_+-]*\n/, "");
-      out.push(`<pre><code>${escAttr(body.replace(/\n$/, ""))}</code></pre>`);
-      return;
-    }
-    for (const block of part.split(/\n{2,}/)) {
-      const trimmed = block.trim();
-      if (!trimmed) { continue; }
-      const lines = trimmed.split("\n");
-      if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
-        out.push(`<ul>${lines.map((l) => `<li>${inlineMd(l.replace(/^\s*[-*]\s+/, ""))}</li>`).join("")}</ul>`);
-      } else if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
-        out.push(`<ol>${lines.map((l) => `<li>${inlineMd(l.replace(/^\s*\d+[.)]\s+/, ""))}</li>`).join("")}</ol>`);
-      } else {
-        out.push(`<p>${lines.map(inlineMd).join("<br>")}</p>`);
-      }
-    }
-  });
-  return out.join("");
-}
-
 const TOOL_ICONS = {
   Bash: "\u{1F4BB}", Read: "\u{1F4C4}", Write: "\u{270F}\u{FE0F}", Edit: "\u{270F}\u{FE0F}",
   Glob: "\u{1F50D}", Grep: "\u{1F50D}", WebSearch: "\u{1F310}", WebFetch: "\u{1F310}", TodoWrite: "\u{2705}",
@@ -3487,6 +3596,41 @@ function toolChips(tools) {
     const detail = t.detail ? `<span class="chip-detail">${escAttr(t.detail.length > 70 ? t.detail.slice(0, 67) + "…" : t.detail)}</span>` : "";
     return `<div class="tool-chip">${ico} <span class="chip-name">${escAttr(t.name)}</span>${detail}</div>`;
   }).join("");
+}
+
+// A turn can run twenty-odd commands. Listing them all buries the answer, so the
+// default is one line — how many steps, and which tools — with the commands
+// themselves a tap away for when you do want to audit what ran.
+function toolSummary(tools) {
+  const counts = new Map();
+  for (const t of tools) { counts.set(t.name, (counts.get(t.name) || 0) + 1); }
+  const parts = [...counts].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name));
+  const steps = tools.length === 1 ? "1 step" : `${tools.length} steps`;
+  return `${steps} · ${parts.join(", ")}`;
+}
+
+// Mid-turn: the counts plus what it's doing right now, so a long turn reads as
+// progress rather than a stall — without stacking a chip per command.
+function liveTrace(tools) {
+  if (!tools || !tools.length) { return ""; }
+  const last = tools[tools.length - 1];
+  const ico = TOOL_ICONS[last.name] || "\u{1F527}";
+  const detail = last.detail
+    ? `<span class="tt-now">${escAttr(last.detail.length > 44 ? last.detail.slice(0, 41) + "…" : last.detail)}</span>`
+    : "";
+  return `<span class="tt-text">${escAttr(toolSummary(tools))}</span> ${ico} ${detail}`;
+}
+
+function toolTrace(tools, msgId) {
+  if (!tools || !tools.length) { return ""; }
+  const open = !!(msgId && state.chatToolsOpen[msgId]);
+  const toggle = msgId
+    ? `<button class="tool-trace" data-act="toggle-tools" data-id="${msgId}" aria-expanded="${open}">
+        <span class="tt-text">${escAttr(toolSummary(tools))}</span>
+        <span class="tt-caret">${open ? "⌃" : "⌄"}</span>
+      </button>`
+    : `<div class="tool-trace static"><span class="tt-text">${escAttr(toolSummary(tools))}</span></div>`;
+  return toggle + (open ? `<div class="chat-tools">${toolChips(tools)}</div>` : "");
 }
 
 function viewChats() {
@@ -3525,7 +3669,7 @@ function viewChat() {
     }
     return `<div class="chat-row bot">
       <div class="chat-bubble">
-        ${m.tools && m.tools.length ? `<div class="chat-tools">${toolChips(m.tools)}</div>` : ""}
+        ${toolTrace(m.tools, m.id)}
         <div class="chat-md">${mdToHtml(m.text)}</div>
       </div>
     </div>`;
@@ -3534,7 +3678,7 @@ function viewChat() {
   const live = state.chatStream
     ? `<div class="chat-row bot chat-live">
         <div class="chat-bubble">
-          <div class="chat-tools">${toolChips(state.chatStream.tools)}</div>
+          <div class="chat-live-trace">${liveTrace(state.chatStream.tools)}</div>
           <div class="chat-md">${escAttr(state.chatStream.text)}</div>
           <div class="chat-typing"><span></span><span></span><span></span></div>
         </div>
@@ -3797,6 +3941,12 @@ app.addEventListener("click", (e) => {
       break;
     case "confirm-ok": { const c = state.confirm; state.confirm = null; if (c && c.onOk) { c.onOk(); } else { render(); } break; }
     case "confirm-cancel": state.confirm = null; render(); break;
+    case "toggle-tools": {
+      const id = t.dataset.id;
+      state.chatToolsOpen[id] = !state.chatToolsOpen[id];
+      render();
+      break;
+    }
     case "new-chat": newChat(); break;
     case "open-chat": openChat(t.dataset.id); break;
     case "chat-send": sendChat(); break;
@@ -4031,6 +4181,22 @@ app.addEventListener("click", (e) => {
       break;
     }
 
+    /* ---- Pain notes ---- */
+    case "pain": openPain(); break;
+    case "new-painnote": newPainNote(); break;
+    case "edit-painnote": editPainNote(t.dataset.id); break;
+    case "pain-toggle-cat": togglePainCat(t.dataset.cat); break;
+    case "pain-level": setPainItemLevel(t.dataset.cat, parseInt(t.dataset.v, 10)); break;
+    case "pain-new": openPainNew(); break;
+    case "pain-new-add": addPainNew(); break;
+    case "save-painnote": savePainNoteEdit(); break;
+    case "del-painnote": {
+      const id = t.dataset.id;
+      state.confirm = { title: "Delete pain note?", ok: "Delete", danger: true, onOk: () => deletePainNoteById(id) };
+      render();
+      break;
+    }
+
     /* ---- Goals ---- */
     case "goals": openGoals(); break;
     case "new-goal": openGoalEdit(null); break;
@@ -4108,6 +4274,8 @@ app.addEventListener("input", (e) => {
   else if (act === "chat-input") { state.chatDraft = t.value; autoGrow(t); }
   else if (act === "note-date") { state.noteEdit.day = t.value; }
   else if (act === "note-text") { state.noteEdit.text = t.value; }
+  else if (act === "painnote-note-text") { state.painNoteEdit.note = t.value; }
+  else if (act === "pain-new-text") { state.painNoteEdit.newText = t.value; }
   else if (act === "wdate" && t.value) {
     const [y, m, d] = t.value.split("-").map(Number);
     state.active.startedAt = new Date(y, m - 1, d, 12).getTime();
@@ -4164,8 +4332,8 @@ function updatePickerList() {
 }
 
 /* ============ Boot ============ */
-const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit", "notes", "noteedit", "exinfo", "goals", "goaledit", "chats", "chat"];
-const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program", "noteedit", "exinfo", "goaledit", "chat"];  // depend on non-persisted state
+const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit", "notes", "noteedit", "pain", "painedit", "exinfo", "goals", "goaledit", "chats", "chat"];
+const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program", "noteedit", "painedit", "exinfo", "goaledit", "chat"];  // depend on non-persisted state
 async function boot() {
   buildDrawer();
   buildPtr();
@@ -4189,6 +4357,7 @@ async function boot() {
     state.templates = data.templates || [];
     state.programs = data.programs || [];
     state.notes = data.notes || [];
+    state.painNotes = data.painNotes || [];
     state.goals = data.goals || [];
     state.foods = data.foods || [];
     state.meals = data.meals || [];

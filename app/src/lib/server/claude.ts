@@ -92,7 +92,15 @@ function systemPrompt(snapshot: string | null): string {
 		'You are running headless on the app server: nobody can answer a permission',
 		'prompt or a clarifying question mid-task, so make reasonable calls yourself and',
 		'say what you assumed. Your working directory is a scratch directory — use it',
-		'for any files you need. Do not modify the Foundry app or its database.'
+		'for any files you need. Do not modify the Foundry app or its database.',
+		'',
+		'Format replies as Markdown: **bold** for the things worth noticing, bullet',
+		'lists for sets and per-day breakdowns, ## headings only when a reply genuinely',
+		'has sections. Use `code` sparingly — for file names, commands and identifiers,',
+		'not for ordinary numbers: write 82.5 kg and feel 8/10 as plain text, since a',
+		'reply where every figure is boxed is harder to read, not easier. Tables are',
+		'supported but keep them to two or three narrow columns — this is a phone.',
+		'No h1, and lead with the answer rather than a preamble.'
 	];
 	if (snapshot) {
 		lines.push(
@@ -100,12 +108,18 @@ function systemPrompt(snapshot: string | null): string {
 			'weights, steps, nutrition, notes, goals and targets. It is refreshed before',
 			'every turn, so read it whenever a question touches their training, food,',
 			'weight or progress; start there rather than looking for a database or an API.',
-			'Read its "_readme" and "counts" fields first: the readme explains the shape,',
-			'the units, and the pre-computed `today` / `weekStartMonday` to use for date',
-			'ranges, and counts tells you how much data is in there. It holds the owner\'s',
-			'entire history and can run to hundreds of KB, so query it with jq (or a short',
-			'script) and pull only the slice you need — do not read or cat the whole file',
-			'unless counts show it is genuinely small.'
+			'',
+			'Be efficient — most questions are one or two commands. Start by reading the',
+			'file\'s "_readme" and "_recipes" fields: _recipes holds ready-made jq queries',
+			'for the common questions (this week, an exercise over time, weekly volume,',
+			'body-weight trend, recent nutrition), so prefer adapting one of those to',
+			'writing your own pipeline. Dates, weekday names, exercise names and per-set',
+			'volume totals are ALREADY computed in the file — you do not need `date`, an',
+			'exerciseId lookup, or a scratch script for any of them.',
+			'',
+			'`jq` and `python3` are installed; use them directly rather than checking',
+			'whether they exist. The file holds the owner\'s entire history and can run to',
+			'hundreds of KB, so select the slice you need instead of reading it whole.'
 		);
 	} else {
 		lines.push(

@@ -391,7 +391,26 @@ const migrations: Array<(d: Database.Database) => void> = [
 			tools TEXT,                   -- assistant only: JSON [{name, detail}] of tools used this turn
 			created_at INTEGER NOT NULL
 		);
-		CREATE INDEX IF NOT EXISTS idx_chat_message_chat ON chat_message(chat_id, created_at)`)
+		CREATE INDEX IF NOT EXISTS idx_chat_message_chat ON chat_message(chat_id, created_at)`),
+
+	// vN -> vN+1: standalone pain notes — a timestamped entry holding one or more
+	// body parts (each 1-10) plus an optional free-text note. Independent of workouts.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS pain_note (
+			id TEXT PRIMARY KEY,
+			at INTEGER NOT NULL,               -- event time, epoch ms
+			note TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_pain_note_at ON pain_note(at);
+		CREATE TABLE IF NOT EXISTS pain_note_item (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			note_id TEXT NOT NULL REFERENCES pain_note(id) ON DELETE CASCADE,
+			cat TEXT NOT NULL,
+			level INTEGER NOT NULL,
+			ord INTEGER NOT NULL DEFAULT 0
+		);
+		CREATE INDEX IF NOT EXISTS idx_pain_note_item_note ON pain_note_item(note_id)`)
 ];
 
 function migrate() {
@@ -768,6 +787,76 @@ export function deleteNote(id: string) {
 	db.prepare('DELETE FROM note WHERE id = ?').run(id);
 }
 
+/* ---- Pain notes (standalone, timestamped; one or more body parts per entry) ---- */
+export type PainItem = { cat: string; level: number };
+
+export function getPainNotes() {
+	const notes = db
+		.prepare('SELECT id, at, note, created_at FROM pain_note ORDER BY at DESC')
+		.all() as any[];
+	const items = db
+		.prepare('SELECT note_id, cat, level FROM pain_note_item ORDER BY ord')
+		.all() as any[];
+	const byNote: Record<string, PainItem[]> = {};
+	for (const it of items) {
+		(byNote[it.note_id] ||= []).push({ cat: it.cat, level: it.level });
+	}
+	return notes.map((n) => ({
+		id: n.id,
+		at: n.at,
+		note: n.note || '',
+		items: byNote[n.id] || [],
+		createdAt: n.created_at
+	}));
+}
+
+function writePainItems(noteId: string, items: PainItem[]) {
+	db.prepare('DELETE FROM pain_note_item WHERE note_id = ?').run(noteId);
+	const insItem = db.prepare(
+		'INSERT INTO pain_note_item (note_id, cat, level, ord) VALUES (?, ?, ?, ?)'
+	);
+	items.forEach((it, i) => insItem.run(noteId, it.cat, it.level, i));
+}
+
+export function createPainNote(input: { at?: number; note?: string; items: PainItem[] }) {
+	const id = uid();
+	const at = Number(input.at) || Date.now();
+	db.transaction(() => {
+		db.prepare('INSERT INTO pain_note (id, at, note, created_at) VALUES (?, ?, ?, ?)').run(
+			id,
+			at,
+			input.note ?? '',
+			Date.now()
+		);
+		writePainItems(id, input.items);
+	})();
+	return getPainNotes().find((n) => n.id === id) || null;
+}
+
+export function updatePainNote(
+	id: string,
+	patch: { at?: number; note?: string; items?: PainItem[] }
+) {
+	const cur = db.prepare('SELECT at, note FROM pain_note WHERE id = ?').get(id) as any;
+	if (!cur) { return null; }
+	db.transaction(() => {
+		db.prepare('UPDATE pain_note SET at = ?, note = ? WHERE id = ?').run(
+			patch.at != null ? Number(patch.at) : cur.at,
+			patch.note !== undefined ? patch.note : cur.note,
+			id
+		);
+		if (patch.items !== undefined) { writePainItems(id, patch.items); }
+	})();
+	return getPainNotes().find((n) => n.id === id) || null;
+}
+
+export function deletePainNote(id: string) {
+	db.transaction(() => {
+		db.prepare('DELETE FROM pain_note_item WHERE note_id = ?').run(id);
+		db.prepare('DELETE FROM pain_note WHERE id = ?').run(id);
+	})();
+}
+
 /* ---- AI chats (conversations with the local `claude` CLI) ---- */
 export type ChatTool = { name: string; detail: string };
 
@@ -1071,6 +1160,7 @@ export function getAllData() {
 		templates: getTemplates(),
 		programs: getPrograms(),
 		notes: getNotes(),
+		painNotes: getPainNotes(),
 		goals: getGoals(),
 		foods: getFoods(),
 		meals: getMeals(),
