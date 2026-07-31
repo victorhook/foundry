@@ -134,6 +134,8 @@ type SnapshotSources = {
 	bodyWeights: unknown[];
 	steps: unknown[];
 	notes: unknown[];
+	/** Standalone pain notes: [{ at, note, items:[{cat,level}] }], any order. */
+	painNotes?: any[];
 	goals: unknown[];
 	profile: any;
 	/** Food-diary entries per day, keyed YYYY-MM-DD. Empty days are dropped. */
@@ -154,6 +156,26 @@ export function buildSnapshot(s: SnapshotSources) {
 	// and shelling out to python to sum sets.
 	const workouts = (s.workouts as any[]).map((w) => enrichWorkout(w, exById, s.timezone));
 	const thisWeek = workouts.filter((w) => w.day >= weekStart);
+
+	// Same treatment as workouts: calendar fields resolved here, oldest-first so
+	// "has my knee got worse" reads in the direction you'd plot it. `worst` is the
+	// peak level in the entry, which is what "how bad was it" actually asks.
+	const painNotes = (s.painNotes || [])
+		.map((p: any) => ({
+			id: p.id,
+			day: localDay(p.at, s.timezone),
+			weekday: localWeekday(p.at, s.timezone),
+			time: localTime(p.at, s.timezone),
+			at: p.at,
+			note: p.note || '',
+			items: p.items || [],
+			worst: (p.items || []).reduce(
+				(m: number | null, i: any) =>
+					typeof i?.level === 'number' && (m === null || i.level > m) ? i.level : m,
+				null as number | null
+			)
+		}))
+		.sort((a: any, b: any) => a.at - b.at);
 	const nutritionDays = Object.entries(s.foodLog)
 		.filter(([, entries]) => entries.length > 0)
 		.sort(([a], [b]) => (a < b ? -1 : 1))
@@ -169,6 +191,7 @@ export function buildSnapshot(s: SnapshotSources) {
 		bodyWeights: s.bodyWeights.length,
 		stepDays: s.steps.length,
 		notes: s.notes.length,
+		painNotes: painNotes.length,
 		goals: s.goals.length,
 		nutritionDays: nutritionDays.length,
 		...s.counts
@@ -196,6 +219,13 @@ export function buildSnapshot(s: SnapshotSources) {
 			'including workoutsThisWeek). Compare a workout\'s `day` against',
 			'`weekStartMonday` as plain strings — that is a correct week filter.',
 			'',
+			'PAIN LIVES IN TWO PLACES and a question about an ache usually needs both.',
+			'painNotes[] are standalone entries, logged any time, oldest first:',
+			'{ day, weekday, time, items[{cat, level 1-10}], worst, note }. Pain recorded',
+			'DURING a session is on the workout instead — `pains[{cat,level}]` for the',
+			'session and `exercises[].pain` for one movement. Check both before',
+			'concluding anything about how an area is doing.',
+			'',
 			'nutrition.days[].entries[]: { slot, name, grams, qty, kcal, protein, carbs,',
 			`fat } — totals per entry, not per 100 g. Last ${NUTRITION_DAYS} days only.`,
 			'',
@@ -216,6 +246,16 @@ export function buildSnapshot(s: SnapshotSources) {
 			weeklyVolume:
 				"jq '[.workouts[] | {w: .weekStartMonday, v: .volumeKg}] | group_by(.w) | map({week: .[0].w, volumeKg: (map(.v // 0) | add), sessions: length})' foundry-data.json",
 			bodyWeightTrend: "jq '.bodyWeights[-14:]' foundry-data.json",
+			painRecent: "jq '.painNotes[-10:]' foundry-data.json",
+			painAreas: "jq '[.painNotes[].items[].cat] | unique' foundry-data.json",
+			// Two short queries rather than one clever combined one: the agent adapts
+			// these before running them, and a long nested pipeline doesn't survive
+			// being edited — it starts writing .jq files and falling back to python.
+			// Run BOTH for an "how is my <area>" question; either alone is half the story.
+			painForAreaStandalone:
+				"jq --arg area 'Knees' '[.painNotes[] | select(any(.items[]; .cat == $area)) | {day, weekday, note, level: (.items[] | select(.cat == $area) | .level)}]' foundry-data.json",
+			painForAreaInSession:
+				"jq --arg area 'Knees' '[.workouts[] | {day, routineName, session: [.pains[] | select(.cat == $area)], perExercise: [.exercises[] | select(.pain.cat? == $area) | {name, pain}]} | select((.session | length) + (.perExercise | length) > 0)]' foundry-data.json",
 			nutritionRecentDays: "jq '.nutrition.days[-7:]' foundry-data.json"
 		},
 		generatedAt: new Date(s.now).toISOString(),
@@ -228,6 +268,7 @@ export function buildSnapshot(s: SnapshotSources) {
 		bodyWeights: s.bodyWeights,
 		steps: s.steps,
 		notes: s.notes,
+		painNotes,
 		goals: s.goals,
 		nutrition: { targets: s.profile?.targets ?? null, days: nutritionDays },
 		counts

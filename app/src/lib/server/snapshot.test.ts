@@ -290,3 +290,66 @@ describe('buildSnapshot week filtering', () => {
 		expect(s.counts.workouts).toBe(3);
 	});
 });
+
+// Pain is the one thing recorded in two unrelated places, so the export has to
+// surface both — a "how's my knee" answer built from half the data is worse than
+// no answer, because it reads as authoritative.
+describe('pain notes in the export', () => {
+	const base = {
+		now: Date.UTC(2026, 6, 30, 12),
+		timezone: 'Europe/Stockholm',
+		exercises: [], workouts: [], bodyWeights: [], steps: [], notes: [], goals: [],
+		profile: {}, foodLog: {}, counts: {}
+	};
+
+	it('resolves calendar fields and sorts oldest-first', () => {
+		const s = buildSnapshot({
+			...base,
+			painNotes: [
+				{ id: 'b', at: Date.UTC(2026, 6, 26, 16), note: 'worse', items: [{ cat: 'Knees', level: 6 }] },
+				{ id: 'a', at: Date.UTC(2026, 6, 22, 6), note: 'twinge', items: [{ cat: 'Knees', level: 3 }] }
+			]
+		});
+		expect(s.painNotes.map((p: any) => p.id)).toEqual(['a', 'b']);
+		expect(s.painNotes[0]).toMatchObject({ day: '2026-07-22', weekday: 'Wed', time: '08:00' });
+		expect(s.painNotes[1]).toMatchObject({ day: '2026-07-26', weekday: 'Sun' });
+	});
+
+	it('reports the worst level in a multi-area entry', () => {
+		const s = buildSnapshot({
+			...base,
+			painNotes: [
+				{ id: 'x', at: Date.UTC(2026, 6, 28, 10), note: '', items: [{ cat: 'Knees', level: 2 }, { cat: 'Hips', level: 7 }] }
+			]
+		});
+		expect(s.painNotes[0].worst).toBe(7);
+	});
+
+	it('leaves worst null when an entry is note-only', () => {
+		const s = buildSnapshot({
+			...base,
+			painNotes: [{ id: 'x', at: Date.UTC(2026, 6, 28, 10), note: 'stiff all over', items: [] }]
+		});
+		expect(s.painNotes[0].worst).toBeNull();
+		expect(s.painNotes[0].note).toBe('stiff all over');
+	});
+
+	it('counts them, and copes with none at all', () => {
+		expect(buildSnapshot({ ...base, painNotes: [{ id: 'x', at: Date.now(), items: [] }] }).counts.painNotes).toBe(1);
+		expect(buildSnapshot(base).painNotes).toEqual([]);
+		expect(buildSnapshot(base).counts.painNotes).toBe(0);
+	});
+
+	it('warns the agent that pain is recorded in two places', () => {
+		const readme = buildSnapshot(base)._readme;
+		expect(readme).toContain('TWO PLACES');
+		expect(readme).toContain('painNotes[]');
+		expect(readme).toContain('exercises[].pain');
+	});
+
+	it('ships a recipe for each of those two places', () => {
+		const r = buildSnapshot(base)._recipes;
+		expect(Object.keys(r)).toContain('painForAreaStandalone');
+		expect(Object.keys(r)).toContain('painForAreaInSession');
+	});
+});

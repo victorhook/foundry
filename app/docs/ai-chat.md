@@ -44,10 +44,16 @@ and `distanceKm`, and `exercises[]` with **names already resolved**. `volumeKg`
 is null where kilograms would be a lie — a `sec` unit puts seconds in the weight
 field, and bodyweight exercises log no external load.
 
+Pain is the one thing Foundry records in two unrelated places — standalone
+`painNotes[]` and pain attached to a workout (`pains[]` per session,
+`exercises[].pain` per movement). The export carries both and the `_readme` says
+so explicitly, because an answer built from half of it still reads as
+authoritative.
+
 `_readme` explains the shape; `_recipes` ships ready-made jq queries for the
 common questions (this week, one exercise over time, weekly volume, body-weight
 trend, recent nutrition). Together those took the same question from ~21 commands
-to 2-4. Keep the recipes to a single `jq` call — an earlier version wrapped a
+to 2-4. Keep each recipe short and to a single `jq` call — an earlier version wrapped a
 nested `$(jq ...)` subshell and the agent flailed around it, which the turn log
 made obvious.
 
