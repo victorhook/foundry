@@ -9,8 +9,10 @@ info:
     permitted — the token cannot create or change anything.
   version: 1.0.0
 servers:
-  # Replace with your deployment's origin (must be HTTPS for a ChatGPT Action).
-  - url: https://YOUR-DOMAIN
+  # This deployment's origin. A ChatGPT Action calls exactly this URL, so a
+  # placeholder here means every call fails with no useful error — change it if
+  # the domain moves. Must be HTTPS.
+  - url: https://foundry12345.duckdns.org
     description: Foundry server
 security:
   - bearerAuth: []

@@ -71,12 +71,27 @@ curl -s -H "Authorization: Bearer $API_TOKEN" https://<your-host>/api/data \
 An OpenAPI 3.1 spec is provided at [`openapi.yaml`](./openapi.yaml). To wire it
 into a custom GPT:
 
+First, prove the endpoint works from outside — one command, and it rules out the
+server before you start debugging ChatGPT:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "Authorization: Bearer $API_TOKEN" https://foundry12345.duckdns.org/api/data
+```
+
+`200` means the API is fine and any failure is in the Action's config. `401` is a
+wrong or unset token; anything else is the proxy or the service.
+
+Then:
+
 1. In ChatGPT, create/edit a GPT → **Configure** → **Create new action**.
 2. Paste the contents of `openapi.yaml` into the schema box (or import it).
-3. Edit the `servers[0].url` to your real origin, e.g.
-   `https://fitness.yourdomain.com` (must be HTTPS).
+3. Check `servers[0].url` matches your origin. It is filled in for this
+   deployment, but **a stale or placeholder URL is the most common reason an
+   Action silently fails** — ChatGPT calls that host and reports little.
 4. Under **Authentication**, choose **API Key**, Auth Type **Bearer**, and paste
-   your `API_TOKEN` value.
+   your `API_TOKEN` value. (Bearer, not "Basic" — and no `Bearer ` prefix in the
+   box, ChatGPT adds it.)
 5. Save. The GPT can now call `getAllData` and answer questions over your
    workouts, notes, goals, nutrition, steps, etc.
 
