@@ -2967,11 +2967,16 @@ async function onProgramFile(file) {
     const fd = new FormData();
     fd.append("file", blob, isPdf ? "doc.pdf" : "image.jpg");
     const r = await fetch("/api/upload", { method: "POST", body: fd });
+    // PDFs go up as-is (only images get downscaled), so an oversized document is
+    // the likely failure here — say so rather than a bare "Upload failed".
+    if (r.status === 413) { throw new Error("too large"); }
     if (!r.ok) { throw new Error("upload failed"); }
     const out = await r.json();
     state.programEdit.filename = out.filename;
     state.programEdit.mime = out.mime;
-  } catch (e) { toast("Upload failed"); }
+  } catch (e) {
+    toast(e && e.message === "too large" ? "File too large to upload" : "Upload failed");
+  }
   state.programEdit.fileBusy = false; render();
 }
 

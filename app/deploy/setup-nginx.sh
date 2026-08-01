@@ -26,6 +26,11 @@ server {
     listen 80;
     server_name $DOMAIN;
 
+    # Uploads (program PDFs, exercise images) go up as multipart bodies. nginx's
+    # 1 MB default would 413 them at the proxy, before the app sees anything.
+    # Matches BODY_SIZE_LIMIT in foundry.service and MAX_BYTES in /api/upload.
+    client_max_body_size 25m;
+
     # AI chat streams one agent turn as Server-Sent Events, and a turn can run
     # for minutes. Buffering it would deliver the whole reply in one lump at the
     # end, and nginx's 60s proxy_read_timeout would cut a long turn off. The app

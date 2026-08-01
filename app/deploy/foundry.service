@@ -17,6 +17,11 @@ Environment=HOST=127.0.0.1
 # set up. See docs/ai-chat.md.
 Environment=HOME=/home/victor
 Environment=PATH=/home/victor/.local/bin:/usr/local/bin:/usr/bin:/bin
+# adapter-node rejects request bodies over BODY_SIZE_LIMIT (default 512K) *before*
+# the route runs, so program PDFs and exercise images 413'd without ever reaching
+# /api/upload's own 25 MB check. Keep this in step with MAX_BYTES in
+# src/routes/api/upload/+server.ts, and with client_max_body_size in setup-nginx.sh.
+Environment=BODY_SIZE_LIMIT=25M
 EnvironmentFile=/opt/foundry/.env
 ExecStart=/usr/bin/node build
 Restart=always
