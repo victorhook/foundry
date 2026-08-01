@@ -78,6 +78,34 @@ const TOOLS = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'We
 // it reads on the web. Not a security boundary (see docs/ai-chat.md); a speed
 // bump that keeps ordinary accidents from becoming outages. Verified to take
 // effect: a denied call shows up in the CLI's `permission_denials`.
+// Commands the agent is expected to use, pre-approved. Without this the CLI's
+// default heuristic auto-approves simple reads (`jq … | head`) but stops at
+// anything that could run arbitrary code — `python3 -c` in particular. Headless
+// there is nobody to approve, so the turn dead-ends with the agent politely
+// asking the user to allow the next call. That is exactly how it failed in
+// production once jq was missing and it fell back to python.
+//
+// This does widen what the agent can do versus the default: `python3 -c` is
+// arbitrary code as the service user. It is not a meaningful escalation — Bash
+// is already in the tool list and the deny rules below still apply — but it is a
+// deliberate trade of a stricter default for an agent that can finish a turn.
+const ALLOW = [
+	'Bash(jq:*)',
+	'Bash(python3:*)',
+	'Bash(cat:*)',
+	'Bash(head:*)',
+	'Bash(tail:*)',
+	'Bash(wc:*)',
+	'Bash(ls:*)',
+	'Bash(grep:*)',
+	'Bash(sort:*)',
+	'Bash(uniq:*)',
+	'Bash(cut:*)',
+	'Bash(date:*)',
+	'Bash(which:*)',
+	'Bash(echo:*)'
+];
+
 function denyRules(): string[] {
 	// The app's own secrets and database, wherever they actually live — better
 	// than hardcoding production paths that silently match nothing in dev.
@@ -193,7 +221,7 @@ export type ClaudeEvent =
 	| { type: 'session'; sessionId: string }
 	| { type: 'delta'; text: string }
 	| { type: 'tool'; name: string; detail: string }
-	| { type: 'done'; text: string; tools: ChatTool[] }
+	| { type: 'done'; text: string; tools: ChatTool[]; denials?: string[] }
 	| { type: 'error'; message: string };
 
 /**
@@ -236,7 +264,7 @@ function buildArgs(prompt: string, resume: string | null, snapshot: string | nul
 		'--append-system-prompt',
 		systemPrompt(snapshot),
 		'--settings',
-		JSON.stringify({ permissions: { deny: denyRules() } })
+		JSON.stringify({ permissions: { allow: ALLOW, deny: denyRules() } })
 	];
 	if (env.CLAUDE_MODEL) { args.push('--model', env.CLAUDE_MODEL); }
 	if (resume) { args.push('--resume', resume); }
@@ -304,7 +332,13 @@ export function createTurnParser() {
 					// `result` holds the final assistant text and is authoritative;
 					// fall back to the accumulated deltas if it's missing.
 					const text = typeof msg.result === 'string' && msg.result ? msg.result : textParts.join('');
-					out.push({ type: 'done', text, tools: tools.slice() });
+					// Commands the permission layer refused. A headless turn can't get
+					// approval, so a denial usually means the reply is an apology rather
+					// than an answer — worth recording instead of leaving it a mystery.
+					const denials = (msg.permission_denials ?? [])
+						.map((d: any) => String(d?.tool_input?.command ?? d?.tool_name ?? ''))
+						.filter(Boolean);
+					out.push({ type: 'done', text, tools: tools.slice(), ...(denials.length ? { denials } : {}) });
 				}
 				return out;
 			}

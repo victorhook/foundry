@@ -84,6 +84,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 			const tools: ChatTool[] = [];
 			let persisted = false;
 			let outcome = 'interrupted';
+			let denials: string[] = [];
 			let failure: string | null = null;
 			const startedAt = Date.now();
 
@@ -113,6 +114,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 						addChatMessage(chatId, 'assistant', ev.text, ev.tools);
 						persisted = true;
 						outcome = 'ok';
+						denials = ev.denials ?? [];
 						send({ type: 'done', text: ev.text, tools: ev.tools });
 						continue;
 					}
@@ -144,7 +146,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 					reply: acc,
 					tools,
 					ms: Date.now() - startedAt,
-					error: failure
+					error: failure,
+					denials
 				});
 				clearInterval(beat);
 				busy.delete(chatId);

@@ -33,6 +33,8 @@ export type TurnLog = {
 	tools: ChatTool[];
 	ms: number;
 	error?: string | null;
+	/** Commands the CLI's permission layer refused, if any. */
+	denials?: string[];
 };
 
 /** One JSON object per line: greppable, and appendable without parsing. */
@@ -48,6 +50,9 @@ export function formatTurn(t: TurnLog, at: number): string {
 		replyChars: t.reply.length,
 		error: t.error || null,
 		toolCount: t.tools.length,
+		// A headless turn cannot get approval, so a denial means the reply is
+		// probably an apology rather than an answer. Record it either way.
+		denials: t.denials?.length ? t.denials : undefined,
 		// The bit the UI now hides: every command, in order, untruncated.
 		tools: t.tools.map((x) => ({ name: x.name, detail: x.detail }))
 	});

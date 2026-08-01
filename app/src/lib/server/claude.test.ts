@@ -307,3 +307,43 @@ describe('onPath', () => {
 		expect(onPath('jq', '')).toBe(false);
 	});
 });
+
+// A headless turn cannot get approval, so a refused command means the reply is
+// an apology rather than an answer. That looked like a mystery in production —
+// the transcript just said "I need your approval" with no trace of what for.
+describe('permission denials', () => {
+	const denied = (cmd: string) => ({ tool_name: 'Bash', tool_input: { command: cmd } });
+
+	it('surfaces refused commands on the done event', () => {
+		const { events } = run([
+			JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				result: 'I need your approval to run a command.',
+				permission_denials: [denied('python3 -c "import json"'), denied('env | sort')]
+			})
+		]);
+		expect(events.at(-1)).toMatchObject({
+			type: 'done',
+			denials: ['python3 -c "import json"', 'env | sort']
+		});
+	});
+
+	it('omits the field entirely on a clean turn', () => {
+		const { events } = run([JSON.stringify({ type: 'result', is_error: false, result: 'ok' })]);
+		expect(events.at(-1)).not.toHaveProperty('denials');
+	});
+
+	it('falls back to the tool name when no command is recorded', () => {
+		const { events } = run([
+			JSON.stringify({
+				type: 'result',
+				is_error: false,
+				result: 'ok',
+				permission_denials: [{ tool_name: 'WebFetch' }]
+			})
+		]);
+		expect((events.at(-1) as any).denials).toEqual(['WebFetch']);
+	});
+});
