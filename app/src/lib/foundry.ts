@@ -176,6 +176,12 @@ function dateInputValue(ts) {
   return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
 }
 
+// Local value for an <input type="datetime-local"> ("YYYY-MM-DDTHH:MM").
+function dateTimeLocalValue(ts) {
+  const d = new Date(ts), p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 // Persist only the client-side draft (in-progress session + view), not the
 // server-owned collections.
 function save() {
@@ -3449,6 +3455,10 @@ function viewPainEdit() {
     <main>
       <div class="section-head"><span class="eyebrow">${editing ? "Edit pain note" : "Log pain"}</span></div>
       <div class="finish-block">
+        <span class="eyebrow">When</span>
+        <input class="date-input" type="datetime-local" value="${dateTimeLocalValue(e.at)}" data-act="painnote-at">
+      </div>
+      <div class="finish-block">
         <span class="eyebrow">Areas</span>
         <div class="chip-row">${catChips}${newHtml}</div>
       </div>
@@ -4481,6 +4491,7 @@ app.addEventListener("input", (e) => {
   else if (act === "chat-input") { state.chatDraft = t.value; autoGrow(t); }
   else if (act === "note-date") { state.noteEdit.day = t.value; }
   else if (act === "note-text") { state.noteEdit.text = t.value; }
+  else if (act === "painnote-at" && t.value) { const ms = new Date(t.value).getTime(); if (Number.isFinite(ms)) { state.painNoteEdit.at = ms; } }
   else if (act === "painnote-note-text") { state.painNoteEdit.note = t.value; }
   else if (act === "pain-new-text") { state.painNoteEdit.newText = t.value; }
   else if (act === "rem-time" && t.value) { setReminderTime(t.dataset.id, t.value); }
