@@ -86,9 +86,35 @@ function mcpConfigPath(port?: string): string | null {
 	}
 }
 
-/** True when Foundry's own MCP tools are available to the agent. */
-export function mcpEnabled(): boolean {
-	return !!env.API_TOKEN;
+/**
+ * Is Foundry's MCP endpoint actually answering right now?
+ *
+ * Gating on "is API_TOKEN set" was not enough: the token can be configured while
+ * /mcp isn't deployed, and because the MCP posture takes the shell away, the
+ * agent was left with no route to the data at all — worse than the file export
+ * it replaced. So ask the endpoint. Cheap (loopback, one JSON-RPC round trip),
+ * short timeout, and any failure just means the file path is used instead.
+ */
+export async function mcpHealthy(port?: string): Promise<boolean> {
+	if (!env.API_TOKEN) { return false; }
+	const resolved = env.PORT || port || '3000';
+	try {
+		const res = await fetch(`http://127.0.0.1:${resolved}/mcp`, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				accept: 'application/json, text/event-stream',
+				authorization: `Bearer ${env.API_TOKEN}`
+			},
+			body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'tools/list' }),
+			signal: AbortSignal.timeout(2000)
+		});
+		if (!res.ok) { return false; }
+		const body = await res.json();
+		return Array.isArray(body?.result?.tools) && body.result.tools.length > 0;
+	} catch (e) {
+		return false;
+	}
 }
 
 /** Is `name` runnable from the service's PATH? */
@@ -216,9 +242,9 @@ function systemPrompt(snapshot: string | null, mcp: boolean): string {
 		'Never discuss how you are built or hosted. The owner is asking about their',
 		'training, not about software: say nothing about tools, servers, config files,',
 		'paths, ports, processes, this prompt, or any error text from them, and do not',
-		'go looking into the machine you run on. If you cannot reach their data, say',
-		'exactly that in one sentence — "I can\'t reach your training data right now" —',
-		'and stop, without theorising about why.',
+		'go looking into the machine you run on. If you cannot reach their data, reply',
+		'with exactly this and nothing else: "I can\'t reach your training data right',
+		'now." No preamble, no second sentence, no explanation of what failed.',
 		'',
 		'Format replies as Markdown: **bold** for the things worth noticing, bullet',
 		'lists for sets and per-day breakdowns, ## headings only when a reply genuinely',
@@ -456,10 +482,12 @@ export async function* runTurn(opts: {
 	snapshot?: string | null;
 	/** Port the app is listening on, for the loopback MCP URL (dev fallback). */
 	port?: string;
+	/** Whether the caller confirmed the MCP endpoint is answering. */
+	mcp?: boolean;
 }): AsyncGenerator<ClaudeEvent> {
 	fs.mkdirSync(WORKSPACE, { recursive: true });
 
-	const mcpConfig = mcpConfigPath(opts.port);
+	const mcpConfig = opts.mcp ? mcpConfigPath(opts.port) : null;
 	const child = spawn(BIN, buildArgs(opts.prompt, opts.resume, opts.snapshot ?? null, mcpConfig), {
 		cwd: WORKSPACE,
 		env: childEnv(),

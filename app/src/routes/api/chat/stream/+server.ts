@@ -7,7 +7,7 @@ import {
 	renameChat,
 	type ChatTool
 } from '$lib/server/db';
-import { runTurn, WORKSPACE, mcpEnabled } from '$lib/server/claude';
+import { runTurn, WORKSPACE, mcpHealthy } from '$lib/server/claude';
 import { writeSnapshot } from '$lib/server/snapshot-write';
 import { logTurn } from '$lib/server/chatlog';
 import type { RequestHandler } from './$types';
@@ -88,14 +88,17 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 			let failure: string | null = null;
 			const startedAt = Date.now();
 
-			// With the MCP tools available the agent queries the database directly, so
-			// there is nothing to export — skip the ~90 KB write and the full read
-			// behind it. The file export is the fallback for when API_TOKEN is unset.
-			const snapshot = mcpEnabled() ? null : writeSnapshot(WORKSPACE, process.env.TZ);
+			// Ask the MCP endpoint whether it's really there before betting the turn on
+			// it: the tools posture removes the shell, so a configured-but-absent
+			// endpoint would leave the agent with no route to the data at all.
+			const port = new URL(request.url).port || undefined;
+			const mcp = await mcpHealthy(port);
+			// With the tools live the agent queries the database directly, so there is
+			// nothing to export — skip the ~90 KB write and the read behind it.
+			const snapshot = mcp ? null : writeSnapshot(WORKSPACE, process.env.TZ);
 
 			try {
-				const port = new URL(request.url).port || undefined;
-				for await (const ev of runTurn({ prompt: text, resume, signal: request.signal, snapshot, port })) {
+				for await (const ev of runTurn({ prompt: text, resume, signal: request.signal, snapshot, port, mcp })) {
 					if (ev.type === 'session') {
 						// Store on the first turn; harmless to rewrite if it ever changes.
 						setChatCliSession(chatId, ev.sessionId);
