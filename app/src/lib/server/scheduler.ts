@@ -42,9 +42,13 @@ export function startScheduler() {
 		return;
 	}
 	started = true;
-	setInterval(() => {
+	const timer = setInterval(() => {
 		tick().catch(() => {
 			/* never let a bad tick kill the interval */
 		});
 	}, 60_000);
+	// Critical: do NOT let this timer keep the Node event loop alive. Without
+	// unref(), the adapter-node process won't exit on SIGTERM, so every deploy
+	// hangs ~90s until systemd SIGKILLs it — 90s of downtime where writes fail.
+	timer.unref?.();
 }
