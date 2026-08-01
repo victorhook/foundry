@@ -1076,6 +1076,7 @@ function render() {
   if (state.view === "profile") { drawWeightChart(); }
   if (state.view === "program") { renderProgramPdf(); }
   if (state.view === "chat") { chatAfterRender(); }
+  sizeNotes(); // expand any prefilled note fields to fit their content
 }
 
 function header(opts) {
@@ -4151,6 +4152,16 @@ function autoGrow(ta) {
   ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
 }
 
+// Note fields grow to fit their content (the page scrolls, not the box) so you
+// can always see the whole note. Applied to every `.notes` textarea.
+function autoGrowNote(ta) {
+  ta.style.height = "auto";
+  ta.style.height = ta.scrollHeight + "px";
+}
+function sizeNotes() {
+  app.querySelectorAll("textarea.notes").forEach(autoGrowNote);
+}
+
 const TOOL_ICONS = {
   Bash: "\u{1F4BB}", Read: "\u{1F4C4}", Write: "\u{270F}\u{FE0F}", Edit: "\u{270F}\u{FE0F}",
   Glob: "\u{1F50D}", Grep: "\u{1F50D}", WebSearch: "\u{1F310}", WebFetch: "\u{1F310}", TodoWrite: "\u{2705}",
@@ -4982,6 +4993,8 @@ app.addEventListener("input", (e) => {
   const t = e.target.closest("[data-act]");
   if (!t) { return; }
   const act = t.dataset.act;
+  // Grow note fields as you type (page scrolls, no inner scrollbar).
+  if (t.tagName === "TEXTAREA" && t.classList.contains("notes")) { autoGrowNote(t); }
   if (act === "search") { state.picker.q = t.value; /* re-render list only, keep focus */ updatePickerList(); }
   else if (act === "reg-search") { exReg().q = t.value; refreshFoodList(".reg-list", registerRows); }
   else if (act === "wnote") { state.active.notes = t.value; save(); }

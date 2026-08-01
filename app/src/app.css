@@ -714,7 +714,7 @@
   }
 
   .notes {
-    width: 100%; min-height: 90px; resize: vertical;
+    width: 100%; min-height: 90px; overflow: hidden;
     background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
     color: var(--text); padding: 14px; font-size: 0.95rem; line-height: 1.5;
   }
