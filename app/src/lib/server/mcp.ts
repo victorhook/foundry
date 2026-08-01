@@ -313,6 +313,9 @@ const searchExercises: Tool = {
 				muscles: e.muscles,
 				unit: e.unit,
 				bodyweight: e.bodyweight,
+				// Versions this movement can be logged as; picked per session.
+				equipment: e.equipment,
+				unilateral: e.unilateral,
 				timesPerformed: stats.get(e.name)?.count ?? 0,
 				lastPerformed: stats.get(e.name)?.lastDay ?? null
 			}))
@@ -371,6 +374,9 @@ const getExerciseHistory: Tool = {
 					day: w.day,
 					weekday: w.weekday,
 					theme: w.theme,
+					// Which version of the movement — loads only compare within one.
+					equipment: e.equipment,
+					perSide: e.perSide,
 					sets: e.sets,
 					setCount: e.setCount,
 					volumeKg: e.volumeKg,
@@ -385,7 +391,13 @@ const getExerciseHistory: Tool = {
 		for (const sess of sessions) {
 			for (const set of sess.sets || []) {
 				if (typeof set?.weight === 'number' && (!heaviestSet || set.weight > heaviestSet.weight)) {
-					heaviestSet = { day: sess.day, reps: set.reps ?? null, weight: set.weight };
+					heaviestSet = {
+						day: sess.day,
+						reps: set.reps ?? null,
+						weight: set.weight,
+						equipment: sess.equipment,
+						perSide: sess.perSide
+					};
 				}
 			}
 			if (typeof sess.volumeKg === 'number' && (!bestVolumeKg || sess.volumeKg > bestVolumeKg.volumeKg)) {
@@ -394,7 +406,16 @@ const getExerciseHistory: Tool = {
 		}
 
 		return {
-			exercise: { id: target.id, name: target.name, type: target.type, unit: target.unit, bodyweight: target.bodyweight, muscles: target.muscles },
+			exercise: {
+				id: target.id,
+				name: target.name,
+				type: target.type,
+				unit: target.unit,
+				bodyweight: target.bodyweight,
+				muscles: target.muscles,
+				equipment: target.equipment,
+				unilateral: target.unilateral
+			},
 			totalSessions: sessions.length,
 			returned: Math.min(sessions.length, limit),
 			heaviestSet,

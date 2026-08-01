@@ -809,13 +809,16 @@ function addExPainNew(entryIdx) {
 
 /* ---- Custom exercises (create + edit) ---- */
 // Open the shared exercise form. exId = null → create; otherwise edit that exercise.
-function openExerciseForm(exId) {
+// from = "register" when opened from the Exercises screen, which owns both create
+// and edit and expects the form to pop straight back to it.
+function openExerciseForm(exId, from) {
   const ex = exId ? exById(exId) : null;
   state.picker = state.picker || {};
   state.picker.creating = true;
   state.picker.editingId = exId || null;
   // Editing is reached from the active workout; creating from the picker.
-  state.picker.editReturn = exId ? "active" : "picker";
+  state.picker.editReturn = from === "register" ? "exercises" : (exId ? "active" : "picker");
+  if (from === "register") { state.picker.target = "register"; }
   state.picker.newName = ex ? ex.name : (state.picker.q || "");
   state.picker.newTags = ex ? (ex.muscles || []).slice() : [];
   state.picker.newTagText = "";
@@ -910,7 +913,10 @@ async function saveExercise() {
   // Creating a new exercise is a one-shot: drop straight back into the
   // workout/template with it added (the multi-add "stay open" applies to
   // picking existing exercises, not to the create form).
+  // Created from the register there's nothing to add it to — just go back to the
+  // list, where it now appears.
   if (wasEditing) { history.back(); }
+  else if (target === "register") { history.back(); toast(`Added ${ex.name}`); }
   else if (target === "template") { addExerciseToTemplate(ex.id, { back: true }); }
   else { addExerciseToActive(ex.id, { back: true }); }
 }
@@ -1057,6 +1063,7 @@ function render() {
   else if (state.view === "goals") { html = viewGoals(); }
   else if (state.view === "goaledit") { html = viewGoalEdit(); }
   else if (state.view === "exinfo") { html = viewExInfo(); }
+  else if (state.view === "exercises") { html = viewExercises(); }
   else if (state.view === "chats") { html = viewChats(); }
   else if (state.view === "chat") { html = viewChat(); }
   app.innerHTML = html + overlays();
@@ -1108,6 +1115,7 @@ function buildDrawer() {
       ${item("goals", "\u{1F3AF}", "Goals")}
       ${item("nutrition", "\u{1F34E}", "Nutrition")}
       ${item("history", "\u{1F4D6}", "History")}
+      ${item("exercises", "\u{1F3CB}\u{FE0F}", "Exercises")}
       ${item("notes", "\u{1F4DD}", "Notes")}
       ${item("pain", "\u{1F915}", "Pain")}
       ${item("programs", "\u{1FA79}", "Programs")}
@@ -1132,6 +1140,7 @@ function buildDrawer() {
     else if (nav === "goals") { openGoals(); }
     else if (nav === "programs") { openPrograms(); }
     else if (nav === "notes") { openNotes(); }
+    else if (nav === "exercises") { openExerciseRegister(); }
     else if (nav === "pain") { openPain(); }
     else if (nav === "chats") { openChats(); }
     else if (nav === "photos") { state.photoTag = null; go("photos"); }
@@ -1812,6 +1821,69 @@ function viewExerciseForm() {
       <button class="btn btn-ghost" data-act="close-create">Back</button>
       <button class="btn btn-primary" data-act="save-ex">${editing ? "Save" : "Add exercise"}</button>
     </div>
+  </div>`;
+}
+
+/* ---- Exercise register ---- */
+// The whole library on one screen (the picker only shows up mid-workout), so
+// exercises can be browsed and edited without starting a session. Its own search
+// /filter state, kept apart from the picker's so neither disturbs the other.
+function exReg() { return (state.exReg = state.exReg || { q: "", cat: "All" }); }
+
+function openExerciseRegister() {
+  state.exReg = { q: "", cat: "All" };
+  go("exercises");
+}
+
+// Alphabetical here (not recency like the picker) — a register is for finding a
+// known name, not for re-logging what you just did. Cardio is server-seeded and
+// has nothing editable, so it stays out.
+function registerExercises() {
+  const r = exReg();
+  const q = r.q.toLowerCase();
+  return state.exercises
+    .filter((e) => e.type !== "cardio")
+    .filter((e) => (r.cat === "All" || (e.muscles || []).includes(r.cat)) && (!q || e.name.toLowerCase().includes(q)))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function registerItemHtml(e) {
+  const thumb = e.image
+    ? `<img class="p-thumb" src="/api/file/${e.image}" loading="lazy" alt="">`
+    : `<span class="p-thumb p-thumb-empty">\u{1F3CB}️</span>`;
+  const st = exStats(e.id);
+  const used = st.count ? `${st.count}× · last ${fmtDate(st.lastAt)}` : "Never done";
+  return `<button class="ex-pick" data-act="reg-edit" data-id="${e.id}">
+    ${thumb}
+    <div style="flex:1;min-width:0;"><div class="p-name">${escAttr(e.name)}</div>
+    <div class="p-muscle">${escAttr((e.muscles || []).join(" · "))}</div>
+    <div class="p-last">${used}</div></div>
+    <span class="p-add">✎</span>
+  </button>`;
+}
+
+function registerRows() {
+  const list = registerExercises();
+  if (list.length) { return list.map(registerItemHtml).join(""); }
+  const filtered = exReg().q || exReg().cat !== "All";
+  return `<div class="empty">${filtered ? "Nothing matches that filter." : "No exercises yet — add one below."}</div>`;
+}
+
+function viewExercises() {
+  const r = exReg();
+  const cats = ["All"].concat(uniqueMuscles());
+  const catHtml = cats.map((c) =>
+    `<button class="chip ${c === r.cat ? "active" : ""}" data-act="reg-set-cat" data-cat="${escAttr(c)}">${c}</button>`
+  ).join("");
+  return `<div class="app">
+    ${header({ back: true, backLabel: "Home" })}
+    <main>
+      <div class="section-head"><span class="eyebrow">Exercise register · ${registerExercises().length}</span></div>
+      <input class="picker-search" id="reg-q" placeholder="Search…" value="${escAttr(r.q)}" data-act="reg-search">
+      ${cats.length > 1 ? `<div class="cat-row">${catHtml}</div>` : ""}
+      <button class="add-ex-btn" data-act="reg-new-ex" style="margin-bottom:14px;">＋  New exercise</button>
+      <div class="reg-list">${registerRows()}</div>
+    </main>
   </div>`;
 }
 
@@ -4700,6 +4772,9 @@ app.addEventListener("click", (e) => {
     case "ex-pain-new-add": addExPainNew(ei); break;
     case "ex-note-toggle": toggleExNote(ei); break;
     case "new-ex": openExerciseForm(null); break;
+    case "reg-new-ex": openExerciseForm(null, "register"); break;
+    case "reg-edit": openExerciseForm(t.dataset.id, "register"); break;
+    case "reg-set-cat": exReg().cat = t.dataset.cat; render(); break;
     case "close-create": {
       // The exercise form is a sub-state of the picker list when created there
       // (stay on picker); reached from another view (editing) it pops the stack.
@@ -4908,6 +4983,7 @@ app.addEventListener("input", (e) => {
   if (!t) { return; }
   const act = t.dataset.act;
   if (act === "search") { state.picker.q = t.value; /* re-render list only, keep focus */ updatePickerList(); }
+  else if (act === "reg-search") { exReg().q = t.value; refreshFoodList(".reg-list", registerRows); }
   else if (act === "wnote") { state.active.notes = t.value; save(); }
   else if (act === "detail-note") { changeWorkoutNotes(t.dataset.id, t.value); }
   else if (act === "goal-title") { if (state.goalEdit) { state.goalEdit.title = t.value; } }
@@ -5030,7 +5106,7 @@ function updatePickerList() {
 }
 
 /* ============ Boot ============ */
-const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit", "notes", "noteedit", "pain", "painedit", "exinfo", "goals", "goaledit", "chats", "chat"];
+const KNOWN_VIEWS = ["home", "choose", "active", "picker", "finish", "history", "detail", "profile", "photos", "album", "templates", "tpledit", "nutrition", "addfood", "foodedit", "mealedit", "programs", "program", "progedit", "notes", "noteedit", "pain", "painedit", "exinfo", "exercises", "goals", "goaledit", "chats", "chat"];
 const EPHEMERAL_VIEWS = ["tpledit", "addfood", "foodedit", "mealedit", "progedit", "program", "noteedit", "painedit", "exinfo", "goaledit", "chat"];  // depend on non-persisted state
 async function boot() {
   buildDrawer();

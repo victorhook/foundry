@@ -4,6 +4,7 @@ import path from 'node:path';
 import { env } from '$env/dynamic/private';
 import { building } from '$app/environment';
 import { hashPassword } from './auth';
+import { cleanEquipment } from '$lib/equipment';
 
 const DB_PATH = env.DATABASE_PATH || 'data/foundry.db';
 
@@ -430,7 +431,31 @@ const migrations: Array<(d: Database.Database) => void> = [
 			enabled INTEGER NOT NULL DEFAULT 1,
 			last_fired TEXT,                  -- YYYY-MM-DD, local
 			created_at INTEGER NOT NULL
-		)`)
+		)`),
+
+	// vN -> vN+1: exercise variants. One library entry per movement; which
+	// implement was used (and whether it was worked one side at a time) is picked
+	// per session on the entry. `exercise.equipment` is the comma-separated list
+	// of options offered for that movement, `unilateral` whether the per-side
+	// toggle is offered at all. The entry columns record what was actually done.
+	(d) =>
+		d.exec(`ALTER TABLE exercise ADD COLUMN equipment TEXT;
+		ALTER TABLE exercise ADD COLUMN unilateral INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE workout_entry ADD COLUMN equipment TEXT;
+		ALTER TABLE workout_entry ADD COLUMN per_side INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE template_entry ADD COLUMN equipment TEXT;
+		ALTER TABLE template_entry ADD COLUMN per_side INTEGER NOT NULL DEFAULT 0`),
+
+	// vN -> vN+1: exercise goals (kind 'exercise') — a personal best to chase on
+	// one movement. `target_value` is in that exercise's own unit (kg, seconds
+	// for a timed hold, or reps for a bodyweight movement), `reps` is an optional
+	// minimum rep count a set must hit to count, and `equipment` optionally pins
+	// the goal to one variant. Progress is computed from the workout log.
+	(d) =>
+		d.exec(`ALTER TABLE goal ADD COLUMN exercise_id TEXT;
+		ALTER TABLE goal ADD COLUMN target_value REAL;
+		ALTER TABLE goal ADD COLUMN reps INTEGER;
+		ALTER TABLE goal ADD COLUMN equipment TEXT`)
 ];
 
 function migrate() {
@@ -514,20 +539,37 @@ function splitMuscles(s: string | null): string[] {
 		.filter(Boolean);
 }
 
+// A logged entry's equipment must be one of the known options, or nothing at all.
+function cleanEq(v: unknown): string | null {
+	return cleanEquipment([v])[0] ?? null;
+}
+
+const EXERCISE_COLS =
+	'id, name, type, muscle, bodyweight, unit, image, equipment, unilateral, custom, created_at';
+
+function rowToExercise(r: any) {
+	return {
+		id: r.id,
+		name: r.name,
+		type: r.type,
+		muscles: splitMuscles(r.muscle),
+		bodyweight: !!r.bodyweight,
+		unit: r.unit || 'kg',
+		image: r.image || null,
+		// Equipment options offered for this movement (empty = no variants).
+		equipment: cleanEquipment(splitMuscles(r.equipment)),
+		unilateral: !!r.unilateral,
+		custom: !!r.custom,
+		// The picker sorts on this so a just-created movement lands at the top.
+		createdAt: r.created_at
+	};
+}
+
 export function getExercises() {
 	return db
-		.prepare('SELECT id, name, type, muscle, bodyweight, unit, image, custom FROM exercise ORDER BY name')
+		.prepare(`SELECT ${EXERCISE_COLS} FROM exercise ORDER BY name`)
 		.all()
-		.map((r: any) => ({
-			id: r.id,
-			name: r.name,
-			type: r.type,
-			muscles: splitMuscles(r.muscle),
-			bodyweight: !!r.bodyweight,
-			unit: r.unit || 'kg',
-			image: r.image || null,
-			custom: !!r.custom
-		}));
+		.map(rowToExercise);
 }
 
 export function getPainCategories(): string[] {
@@ -591,6 +633,9 @@ export function getWorkouts() {
 		(entriesByWorkout[e.workout_id] ||= []).push({
 			exerciseId: e.exercise_id,
 			sets,
+			// Which variant of the movement was performed this session.
+			equipment: e.equipment || null,
+			perSide: !!e.per_side,
 			note: e.note || '',
 			pain: e.pain_cat ? { cat: e.pain_cat, level: e.pain_level } : null
 		});
@@ -683,7 +728,9 @@ export function getTemplates() {
 		.prepare('SELECT id, name, icon, ord FROM workout_template ORDER BY ord, created_at')
 		.all() as any[];
 	const entries = db
-		.prepare('SELECT template_id, exercise_id, set_count, reps, weight FROM template_entry ORDER BY ord')
+		.prepare(
+			'SELECT template_id, exercise_id, set_count, reps, weight, equipment, per_side FROM template_entry ORDER BY ord'
+		)
 		.all() as any[];
 	const byTpl: Record<string, any[]> = {};
 	for (const e of entries) {
@@ -691,7 +738,9 @@ export function getTemplates() {
 			exerciseId: e.exercise_id,
 			setCount: e.set_count,
 			reps: e.reps,
-			weight: e.weight
+			weight: e.weight,
+			equipment: e.equipment || null,
+			perSide: !!e.per_side
 		});
 	}
 	return tpls.map((t) => ({
@@ -711,7 +760,14 @@ type TemplateInput = {
 	name: string;
 	icon?: string | null;
 	ord?: number;
-	entries: { exerciseId: string; setCount?: number | null; reps?: number | null; weight?: number | null }[];
+	entries: {
+		exerciseId: string;
+		setCount?: number | null;
+		reps?: number | null;
+		weight?: number | null;
+		equipment?: string | null;
+		perSide?: boolean;
+	}[];
 };
 
 export const saveTemplate = db.transaction((t: TemplateInput) => {
@@ -726,10 +782,20 @@ export const saveTemplate = db.transaction((t: TemplateInput) => {
 		).run(id, t.name, t.icon ?? null, t.ord ?? 0, Date.now());
 	}
 	const ins = db.prepare(
-		'INSERT INTO template_entry (id, template_id, exercise_id, ord, set_count, reps, weight) VALUES (?, ?, ?, ?, ?, ?, ?)'
+		'INSERT INTO template_entry (id, template_id, exercise_id, ord, set_count, reps, weight, equipment, per_side) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
 	);
 	(t.entries || []).forEach((e, i) =>
-		ins.run(uid(), id, e.exerciseId, i, e.setCount ?? null, e.reps ?? null, e.weight ?? null)
+		ins.run(
+			uid(),
+			id,
+			e.exerciseId,
+			i,
+			e.setCount ?? null,
+			e.reps ?? null,
+			e.weight ?? null,
+			cleanEq(e.equipment),
+			e.perSide ? 1 : 0
+		)
 	);
 	return getTemplate(id);
 });
@@ -1046,10 +1112,24 @@ export function addChatMessage(
 	return id;
 }
 
-/* ---- Goals (weekly targets + open-ended generic goals) ---- */
+/* ---- Goals (weekly targets, exercise PBs, open-ended generic goals) ---- */
+export type GoalInput = {
+	kind: string;
+	title: string;
+	target?: number | null;
+	filter?: string | null;
+	exerciseId?: string | null;
+	targetValue?: number | null;
+	reps?: number | null;
+	equipment?: string | null;
+};
+
+const GOAL_COLS =
+	'id, kind, title, target, filter, done, ord, created_at, exercise_id, target_value, reps, equipment';
+
 export function getGoals() {
 	return db
-		.prepare('SELECT id, kind, title, target, filter, done, ord, created_at FROM goal ORDER BY ord, created_at')
+		.prepare(`SELECT ${GOAL_COLS} FROM goal ORDER BY ord, created_at`)
 		.all()
 		.map((r: any) => ({
 			id: r.id,
@@ -1059,35 +1139,55 @@ export function getGoals() {
 			filter: r.filter,
 			done: !!r.done,
 			ord: r.ord,
-			createdAt: r.created_at
+			createdAt: r.created_at,
+			// kind 'exercise': the movement, the number to beat (in that
+			// exercise's own unit) and the variant/rep floor it has to be hit at.
+			exerciseId: r.exercise_id,
+			targetValue: r.target_value,
+			reps: r.reps,
+			equipment: r.equipment
 		}));
 }
 
-export function createGoal(g: { kind: string; title: string; target?: number | null; filter?: string | null }) {
+export function createGoal(g: GoalInput) {
 	const id = uid();
 	const row = db.prepare('SELECT COALESCE(MAX(ord), -1) AS m FROM goal').get() as any;
 	const ord = (row?.m ?? -1) + 1;
 	db.prepare(
-		'INSERT INTO goal (id, kind, title, target, filter, done, ord, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)'
-	).run(id, g.kind, g.title, g.target ?? null, g.filter ?? null, ord, Date.now());
+		'INSERT INTO goal (id, kind, title, target, filter, done, ord, created_at, exercise_id, target_value, reps, equipment) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)'
+	).run(
+		id,
+		g.kind,
+		g.title,
+		g.target ?? null,
+		g.filter ?? null,
+		ord,
+		Date.now(),
+		g.exerciseId ?? null,
+		g.targetValue ?? null,
+		g.reps ?? null,
+		cleanEq(g.equipment)
+	);
 	return getGoals().find((x) => x.id === id) || null;
 }
 
-export function updateGoal(
-	id: string,
-	patch: { title?: string; target?: number | null; filter?: string | null; done?: boolean }
-) {
-	const cur = db.prepare('SELECT title, target, filter, done FROM goal WHERE id = ?').get(id) as any;
+export function updateGoal(id: string, patch: Partial<GoalInput> & { done?: boolean }) {
+	const cur = db
+		.prepare('SELECT title, target, filter, done, exercise_id, target_value, reps, equipment FROM goal WHERE id = ?')
+		.get(id) as any;
 	if (!cur) { return null; }
-	const title = patch.title !== undefined ? patch.title : cur.title;
-	const target = patch.target !== undefined ? patch.target : cur.target;
-	const filter = patch.filter !== undefined ? patch.filter : cur.filter;
-	const done = patch.done !== undefined ? (patch.done ? 1 : 0) : cur.done;
-	db.prepare('UPDATE goal SET title = ?, target = ?, filter = ?, done = ? WHERE id = ?').run(
-		title,
-		target,
-		filter,
-		done,
+	const pick = <T>(v: T | undefined, fallback: T) => (v !== undefined ? v : fallback);
+	db.prepare(
+		'UPDATE goal SET title = ?, target = ?, filter = ?, done = ?, exercise_id = ?, target_value = ?, reps = ?, equipment = ? WHERE id = ?'
+	).run(
+		pick(patch.title, cur.title),
+		pick(patch.target, cur.target),
+		pick(patch.filter, cur.filter),
+		patch.done !== undefined ? (patch.done ? 1 : 0) : cur.done,
+		pick(patch.exerciseId, cur.exercise_id),
+		pick(patch.targetValue, cur.target_value),
+		pick(patch.reps, cur.reps),
+		patch.equipment !== undefined ? cleanEq(patch.equipment) : cur.equipment,
 		id
 	);
 	return getGoals().find((x) => x.id === id) || null;
@@ -1417,43 +1517,115 @@ function rememberMuscles(muscles: string[]) {
 	}
 }
 
-export function createExercise(name: string, muscles: string[], bodyweight: boolean, unit: string, image: string | null) {
+export type ExerciseInput = {
+	name: string;
+	muscles: string[];
+	bodyweight: boolean;
+	unit: string;
+	image: string | null;
+	equipment: string[];
+	unilateral: boolean;
+};
+
+export function createExercise(e: ExerciseInput) {
 	const id = uid();
-	const clean = muscles.map((m) => m.trim()).filter(Boolean);
+	const clean = e.muscles.map((m) => m.trim()).filter(Boolean);
+	const equipment = cleanEquipment(e.equipment);
 	db.prepare(
-		'INSERT INTO exercise (id, name, type, muscle, bodyweight, unit, image, custom, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)'
-	).run(id, name, 'strength', clean.join(','), bodyweight ? 1 : 0, unit, image ?? null, Date.now());
+		'INSERT INTO exercise (id, name, type, muscle, bodyweight, unit, image, equipment, unilateral, custom, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)'
+	).run(
+		id,
+		e.name,
+		'strength',
+		clean.join(','),
+		e.bodyweight ? 1 : 0,
+		e.unit,
+		e.image ?? null,
+		equipment.join(','),
+		e.unilateral ? 1 : 0,
+		Date.now()
+	);
 	rememberMuscles(clean);
-	return { id, name, type: 'strength', muscles: clean, bodyweight, unit, image: image ?? null, custom: true };
+	return getExercise(id);
 }
 
-export function updateExercise(id: string, name: string, muscles: string[], bodyweight: boolean, unit: string, image: string | null) {
-	const clean = muscles.map((m) => m.trim()).filter(Boolean);
-	db.prepare('UPDATE exercise SET name = ?, muscle = ?, bodyweight = ?, unit = ?, image = ? WHERE id = ?').run(
-		name,
+export function updateExercise(id: string, e: ExerciseInput) {
+	const clean = e.muscles.map((m) => m.trim()).filter(Boolean);
+	db.prepare(
+		'UPDATE exercise SET name = ?, muscle = ?, bodyweight = ?, unit = ?, image = ?, equipment = ?, unilateral = ? WHERE id = ?'
+	).run(
+		e.name,
 		clean.join(','),
-		bodyweight ? 1 : 0,
-		unit,
-		image ?? null,
+		e.bodyweight ? 1 : 0,
+		e.unit,
+		e.image ?? null,
+		cleanEquipment(e.equipment).join(','),
+		e.unilateral ? 1 : 0,
 		id
 	);
 	rememberMuscles(clean);
-	const r = db.prepare('SELECT id, name, type, muscle, bodyweight, unit, image, custom FROM exercise WHERE id = ?').get(id) as any;
-	return {
-		id: r.id,
-		name: r.name,
-		type: r.type,
-		muscles: splitMuscles(r.muscle),
-		bodyweight: !!r.bodyweight,
-		unit: r.unit || 'kg',
-		image: r.image || null,
-		custom: !!r.custom
-	};
+	return getExercise(id);
+}
+
+export function getExercise(id: string) {
+	const r = db.prepare(`SELECT ${EXERCISE_COLS} FROM exercise WHERE id = ?`).get(id) as any;
+	return r ? rowToExercise(r) : null;
 }
 
 export function createPainCategory(name: string): string {
 	db.prepare('INSERT OR IGNORE INTO pain_category (name) VALUES (?)').run(name);
 	return name;
+}
+
+function painCategoryExists(name: string): boolean {
+	return !!db.prepare('SELECT 1 FROM pain_category WHERE name = ?').get(name);
+}
+
+// Rename a body area everywhere it appears. The name is denormalized into every
+// logged occurrence (workout entries, workout-level pain, pain notes), so the
+// rename has to rewrite history too or old entries would keep the stale label.
+// Renaming onto an existing area merges the two. Returns null if `from` is
+// unknown. The pain_category row is updated in place, so list order is kept.
+export const renamePainCategory = db.transaction((from: string, to: string) => {
+	if (!painCategoryExists(from)) {
+		return null;
+	}
+	const merged = painCategoryExists(to);
+	if (merged) {
+		db.prepare('DELETE FROM pain_category WHERE name = ?').run(from);
+	} else {
+		db.prepare('UPDATE pain_category SET name = ? WHERE name = ?').run(to, from);
+	}
+	db.prepare('UPDATE workout_entry SET pain_cat = ? WHERE pain_cat = ?').run(to, from);
+	db.prepare('UPDATE workout_pain SET cat = ? WHERE cat = ?').run(to, from);
+	db.prepare('UPDATE pain_note_item SET cat = ? WHERE cat = ?').run(to, from);
+	if (merged) {
+		// A merge can leave the same area listed twice on one workout or note.
+		// Keep the worst level of each pair and drop the duplicate.
+		db.prepare(
+			`DELETE FROM workout_pain WHERE id IN (
+				SELECT id FROM (
+					SELECT id, ROW_NUMBER() OVER (PARTITION BY workout_id ORDER BY level DESC, id) AS rn
+					FROM workout_pain WHERE cat = ?
+				) WHERE rn > 1
+			)`
+		).run(to);
+		db.prepare(
+			`DELETE FROM pain_note_item WHERE id IN (
+				SELECT id FROM (
+					SELECT id, ROW_NUMBER() OVER (PARTITION BY note_id ORDER BY level DESC, id) AS rn
+					FROM pain_note_item WHERE cat = ?
+				) WHERE rn > 1
+			)`
+		).run(to);
+	}
+	return { name: to, merged };
+});
+
+// Drop a body area from the pickable list. History keeps its label on purpose —
+// what was logged under that name stays true; only the option goes away.
+export function deletePainCategory(name: string): boolean {
+	return db.prepare('DELETE FROM pain_category WHERE name = ?').run(name).changes > 0;
 }
 
 export function createMuscleGroup(name: string): string {
@@ -1469,7 +1641,14 @@ type WorkoutInput = {
 	feel: number | null;
 	energy: number | null;
 	notes: string;
-	entries: { exerciseId: string; sets: SetInput[]; note?: string; pain?: { cat: string; level: number } | null }[];
+	entries: {
+		exerciseId: string;
+		sets: SetInput[];
+		equipment?: string | null;
+		perSide?: boolean;
+		note?: string;
+		pain?: { cat: string; level: number } | null;
+	}[];
 	pains: { cat: string; level: number }[];
 };
 
@@ -1484,7 +1663,7 @@ export const createWorkout = db.transaction((w: WorkoutInput) => {
 	if (theme) { rememberTheme(theme); }
 
 	const insEntry = db.prepare(
-		'INSERT INTO workout_entry (id, workout_id, exercise_id, ord, duration, distance, pace, note, pain_cat, pain_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+		'INSERT INTO workout_entry (id, workout_id, exercise_id, ord, duration, distance, pace, note, pain_cat, pain_level, equipment, per_side) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 	);
 	const insSet = db.prepare(
 		'INSERT INTO workout_set (entry_id, ord, reps, weight) VALUES (?, ?, ?, ?)'
@@ -1504,7 +1683,9 @@ export const createWorkout = db.transaction((w: WorkoutInput) => {
 			cardio.pace ?? null,
 			e.note || null,
 			e.pain?.cat ?? null,
-			e.pain?.level ?? null
+			e.pain?.level ?? null,
+			cleanEq(e.equipment),
+			e.perSide ? 1 : 0
 		);
 		strength.forEach((s, j) => insSet.run(entryId, j, s.reps ?? null, s.weight ?? null));
 	});
@@ -1525,6 +1706,8 @@ export const createWorkout = db.transaction((w: WorkoutInput) => {
 		entries: w.entries.map((e) => ({
 			exerciseId: e.exerciseId,
 			sets: e.sets || [],
+			equipment: cleanEq(e.equipment),
+			perSide: !!e.perSide,
 			note: e.note || '',
 			pain: e.pain || null
 		})),

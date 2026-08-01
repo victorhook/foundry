@@ -229,3 +229,76 @@ test('exercise image uploads and shows in the picker', async ({ page }) => {
 		page.locator('.ex-pick', { hasText: 'Cable Row' }).locator('img.p-thumb')
 	).toBeVisible();
 });
+
+// The picker is ordered by recency, and "just added to the library" counts as
+// recent — otherwise a brand-new movement sinks into the never-trained tail.
+test('a newly added exercise is first in the picker', async ({ page }) => {
+	await login(page);
+	await startRoutine(page, 'Gym');
+	await page.getByRole('button', { name: /Add exercise/ }).click();
+	await page.getByRole('button', { name: /New exercise/ }).click();
+	// A name that sorts last alphabetically, so position can only come from recency.
+	await page.getByPlaceholder('Name').fill('Zercher Squat');
+	await page.getByRole('button', { name: 'Legs' }).click();
+	await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
+
+	await page.getByRole('button', { name: /Add exercise/ }).click();
+	await expect(page.locator('.ex-pick').first()).toContainText('Zercher Squat');
+});
+
+// Variants: one library entry per movement, with the equipment (and whether it
+// was worked one side at a time) chosen on the entry when logging.
+test('an exercise logs which version was used, and a goal tracks that version', async ({ page }) => {
+	await login(page);
+	await startRoutine(page, 'Gym');
+
+	// A movement that can be done with dumbbells or a barbell, one side at a time.
+	await page.getByRole('button', { name: /Add exercise/ }).click();
+	await page.getByRole('button', { name: /New exercise/ }).click();
+	await page.getByPlaceholder('Name').fill('Shoulder Press');
+	await page.locator('[data-act="toggle-equip"][data-q="dumbbell"]').click();
+	await page.locator('[data-act="toggle-equip"][data-q="barbell"]').click();
+	await page.locator('[data-act="toggle-unilateral"]').click();
+	await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
+
+	// The entry offers both versions; log this session as one-armed dumbbells.
+	await page.locator('[data-act="entry-equip"][data-q="dumbbell"]').click();
+	await page.locator('[data-act="entry-side"]').click();
+	await page.getByRole('button', { name: /Add set/ }).click();   // defaults to 8 × 20 kg
+	await page.getByRole('button', { name: /Finish workout/ }).click();
+	await page.getByRole('button', { name: /Save workout/ }).click();
+
+	// The saved session records the version, not just the movement.
+	await page.locator('.hcard').first().click();
+	await expect(page.locator('.d-ex', { hasText: 'Shoulder Press' }).locator('.d-ex-var'))
+		.toHaveText('Dumbbell · /side');
+	await page.locator('.back-btn').click();   // detail has no menu; pop back home
+
+	// A goal on the dumbbell version counts that 20 kg set…
+	await menuNav(page, 'Goals');
+	await page.getByRole('button', { name: /New goal/ }).click();
+	await page.locator('[data-act="goal-kind"][data-kind="exercise"]').click();
+	await page.locator('[data-act="goal-title"]').fill('Press DB');
+	await page.locator('[data-act="goal-exercise"]').selectOption({ label: 'Shoulder Press' });
+	await page.locator('[data-act="goal-target-value"]').fill('40');
+	await page.locator('[data-act="goal-equip"][data-q="dumbbell"]').click();
+	await page.getByRole('button', { name: /Add goal/ }).click();
+	await expect(page.locator('.goal-card', { hasText: 'Press DB' }).locator('.goal-count'))
+		.toHaveText('20/40 kg');
+
+	// …while the same target on the barbell version is untouched by it.
+	await page.getByRole('button', { name: /New goal/ }).click();
+	await page.locator('[data-act="goal-kind"][data-kind="exercise"]').click();
+	await page.locator('[data-act="goal-title"]').fill('Press BB');
+	await page.locator('[data-act="goal-exercise"]').selectOption({ label: 'Shoulder Press' });
+	await page.locator('[data-act="goal-target-value"]').fill('40');
+	await page.locator('[data-act="goal-equip"][data-q="barbell"]').click();
+	await page.getByRole('button', { name: /Add goal/ }).click();
+	await expect(page.locator('.goal-card', { hasText: 'Press BB' }).locator('.goal-count'))
+		.toHaveText('0/40 kg');
+
+	// Both come back from SQLite with progress recomputed from the log.
+	await page.reload();
+	await expect(page.locator('.goal-card', { hasText: 'Press DB' }).locator('.goal-count'))
+		.toHaveText('20/40 kg');
+});

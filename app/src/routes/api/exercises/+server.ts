@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { createExercise, updateExercise } from '$lib/server/db';
+import { cleanEquipment } from '$lib/equipment';
 import type { RequestHandler } from './$types';
 
 function parseMuscles(body: any): string[] {
@@ -20,12 +21,18 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	if (!name) {
 		throw error(400, 'Name required');
 	}
-	const muscles = parseMuscles(body);
-	const bodyweight = !!body.bodyweight;
-	const unit = body.unit === 'sec' ? 'sec' : 'kg';
-	const image = body.image ? String(body.image) : null;
+	const input = {
+		name,
+		muscles: parseMuscles(body),
+		bodyweight: !!body.bodyweight,
+		unit: body.unit === 'sec' ? 'sec' : 'kg',
+		image: body.image ? String(body.image) : null,
+		// Equipment options this movement can be performed with (unknown ids drop).
+		equipment: cleanEquipment(body.equipment),
+		unilateral: !!body.unilateral
+	};
 	if (body.id) {
-		return json(updateExercise(String(body.id), name, muscles, bodyweight, unit, image));
+		return json(updateExercise(String(body.id), input));
 	}
-	return json(createExercise(name, muscles, bodyweight, unit, image));
+	return json(createExercise(input));
 };

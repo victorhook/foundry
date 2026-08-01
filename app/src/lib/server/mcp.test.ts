@@ -270,7 +270,13 @@ describe('get_exercise_history', () => {
 		const d = call('get_exercise_history', { exercise: 'Bench Press' }).structuredContent;
 		expect(d.totalSessions).toBe(2);
 		expect(d.sessions[0].day).toBe('2026-07-08');
-		expect(d.heaviestSet).toEqual({ day: '2026-07-08', reps: 5, weight: 85 });
+		expect(d.heaviestSet).toEqual({
+			day: '2026-07-08',
+			reps: 5,
+			weight: 85,
+			equipment: null,
+			perSide: false
+		});
 		expect(d.bestVolumeKg).toEqual({ day: '2026-07-08', volumeKg: 850 });
 	});
 
