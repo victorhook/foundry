@@ -2,6 +2,7 @@
 import { pushState, replaceState } from '$app/navigation';
 import { page } from '$app/stores';
 import { mdToHtml } from '$lib/markdown';
+import { EQUIPMENT, equipmentLabel, equipmentShort } from '$lib/equipment';
 // Ported from the POC. Server holds the source of truth (exercises, pain
 // categories, workouts); localStorage only keeps a draft of the in-progress
 // session + current view so an accidental refresh at the gym isn't lost.
@@ -201,11 +202,44 @@ function save() {
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
 function exById(id) {
-  return state.exercises.find((e) => e.id === id) || { id, name: "Unknown", type: "strength", muscles: [], bodyweight: false, unit: "kg" };
+  return state.exercises.find((e) => e.id === id) || { id, name: "Unknown", type: "strength", muscles: [], bodyweight: false, unit: "kg", equipment: [], unilateral: false };
 }
 
 // Label for an exercise's load field (the second stepper on a set).
 function loadUnit(ex) { return ex.unit === "sec" ? "sec" : "kg"; }
+
+/* ---- Variants (equipment + one side at a time) ---- */
+// The equipment options a movement offers. Empty = no variant picker at all.
+function exEquipment(ex) { return (ex && ex.equipment) || []; }
+
+// Short badge for a logged entry: "DB", "Cable · /side", "/side"…
+function variantLabel(entry, short) {
+  const parts = [];
+  const eq = entry && entry.equipment;
+  if (eq) { parts.push(short ? equipmentShort(eq) : equipmentLabel(eq)); }
+  if (entry && entry.perSide) { parts.push("/side"); }
+  return parts.join(" · ");
+}
+
+// The most recent logged entry for an exercise — used to carry the variant
+// (and the last set) into a new session, so "same as last time" needs no taps.
+function lastEntryFor(exerciseId) {
+  for (let i = state.workouts.length - 1; i >= 0; i--) {
+    const e = state.workouts[i].entries.find((en) => en.exerciseId === exerciseId);
+    if (e) { return e; }
+  }
+  return null;
+}
+
+// Which variant a fresh entry starts on: what was used last, else the only
+// option (if there's exactly one), else nothing until the user picks.
+function defaultVariant(ex) {
+  const opts = exEquipment(ex);
+  const last = lastEntryFor(ex.id);
+  const equipment = last && opts.includes(last.equipment) ? last.equipment : (opts.length === 1 ? opts[0] : null);
+  const perSide = ex.unilateral && last ? !!last.perSide : false;
+  return { equipment, perSide };
+}
 
 // Accordion: exactly one exercise expanded at a time keeps the active list dense.
 function setOnlyExpanded(idx) {
@@ -331,13 +365,18 @@ function newEntry(ex) {
     const seed = last ? { duration: last.duration, distance: last.distance } : blankSet("cardio");
     return { exerciseId: ex.id, sets: [{ duration: seed.duration, distance: seed.distance }] };
   }
-  return { exerciseId: ex.id, sets: [] };
+  return { exerciseId: ex.id, sets: [], ...defaultVariant(ex) };
 }
 
 // Clone an entry's sets as starting values for a new session ("repeat"), dropping
-// per-session state (pain, notes).
+// per-session state (pain, notes) but keeping the variant that was used.
 function cloneEntryForRepeat(entry) {
-  return { exerciseId: entry.exerciseId, sets: (entry.sets || []).map((s) => ({ ...s })) };
+  return {
+    exerciseId: entry.exerciseId,
+    sets: (entry.sets || []).map((s) => ({ ...s })),
+    equipment: entry.equipment || null,
+    perSide: !!entry.perSide,
+  };
 }
 
 // Guard against silently discarding an in-progress workout: if one exists (with
@@ -449,7 +488,13 @@ function startFromTemplate(t, ts) {
       if (!ex.bodyweight) { s.weight = te.weight != null ? te.weight : DEFAULT_STRENGTH_SET.weight; }
       sets.push(s);
     }
-    return { exerciseId: te.exerciseId, sets };
+    const v = defaultVariant(ex);
+    return {
+      exerciseId: te.exerciseId,
+      sets,
+      equipment: te.equipment || v.equipment,
+      perSide: te.perSide != null ? !!te.perSide : v.perSide,
+    };
   });
   state.active = {
     id: uid(),
@@ -496,6 +541,8 @@ function templateEntriesFromWorkout(w) {
         setCount: sets.length || 1,
         reps: first.reps != null ? first.reps : DEFAULT_STRENGTH_SET.reps,
         weight: first.weight != null ? first.weight : null,
+        equipment: en.equipment || null,
+        perSide: !!en.perSide,
       };
     });
 }
@@ -518,6 +565,7 @@ function addExerciseToTemplate(id, opts) {
     setCount: 3,
     reps: last && last.reps != null ? last.reps : DEFAULT_STRENGTH_SET.reps,
     weight: ex.bodyweight ? null : (last && last.weight != null ? last.weight : DEFAULT_STRENGTH_SET.weight),
+    ...defaultVariant(ex),
   });
   if (opts && opts.back) { history.back(); return; }
   markPickerAdded(id);
@@ -588,6 +636,22 @@ function addSet(entryIdx) {
     if (!bw) { s.weight = last && last.weight != null ? last.weight : DEFAULT_STRENGTH_SET.weight; }
   }
   entry.sets.push(s);
+  save();
+  render();
+}
+
+/* ---- Variant (equipment / one side at a time) ---- */
+// Tapping the active chip clears it, so a mis-tap doesn't need a second row.
+function setEntryEquipment(entryIdx, equipment) {
+  const entry = state.active.entries[entryIdx];
+  entry.equipment = entry.equipment === equipment ? null : equipment;
+  save();
+  render();
+}
+
+function toggleEntrySide(entryIdx) {
+  const entry = state.active.entries[entryIdx];
+  entry.perSide = !entry.perSide;
   save();
   render();
 }
@@ -748,6 +812,8 @@ function openExerciseForm(exId) {
   state.picker.newTagText = "";
   state.picker.newBodyweight = ex ? !!ex.bodyweight : false;
   state.picker.newUnit = ex ? loadUnit(ex) : "kg";
+  state.picker.newEquipment = ex ? exEquipment(ex).slice() : [];
+  state.picker.newUnilateral = ex ? !!ex.unilateral : false;
   state.picker.newImage = ex ? (ex.image || null) : null;
   state.picker.imageBusy = false;
   go("picker"); // the form renders inside the picker view
@@ -773,6 +839,14 @@ function toggleNewTag(tag) {
   const tags = state.picker.newTags;
   const i = tags.indexOf(tag);
   if (i >= 0) { tags.splice(i, 1); } else { tags.push(tag); }
+  render();
+}
+
+// Which equipment versions this exercise can be logged as.
+function toggleNewEquipment(id) {
+  const list = state.picker.newEquipment || (state.picker.newEquipment = []);
+  const i = list.indexOf(id);
+  if (i >= 0) { list.splice(i, 1); } else { list.push(id); }
   render();
 }
 
@@ -803,6 +877,8 @@ async function saveExercise() {
       bodyweight: !!state.picker.newBodyweight,
       unit: state.picker.newUnit || "kg",
       image: state.picker.newImage || null,
+      equipment: state.picker.newEquipment || [],
+      unilateral: !!state.picker.newUnilateral,
     });
   } catch (e) {
     toast("Couldn't save exercise");
@@ -885,6 +961,8 @@ async function finishWorkout() {
     entries: w.entries.map((en) => ({
       exerciseId: en.exerciseId,
       sets: en.sets,
+      equipment: en.equipment || null,
+      perSide: !!en.perSide,
       note: en.note || "",
       pain: en.pain || null,
     })),
@@ -1022,7 +1100,7 @@ function buildDrawer() {
       ${item("nutrition", "\u{1F34E}", "Nutrition")}
       ${item("history", "\u{1F4D6}", "History")}
       ${item("notes", "\u{1F4DD}", "Notes")}
-      ${item("pain", "\u{1FA79}", "Pain")}
+      ${item("pain", "\u{1F915}", "Pain")}
       ${item("programs", "\u{1FA79}", "Programs")}
       ${item("photos", "\u{1F5BC}️", "Photos")}
       ${item("profile", "\u{1F464}", "Profile")}
@@ -1423,10 +1501,12 @@ function entryCard(entry, ei) {
   // --- Collapsed: one dense, tappable row (keeps the list compact) ---
   if (!entry.expanded) {
     const flags = `${pain ? `<span class="ec-flag" style="color:${heatColor(pain.level)}">⚠</span>` : ""}${hasNote ? `<span class="ec-flag">✎</span>` : ""}`;
+    const variant = variantLabel(entry, true);
     return `<div class="ex-card ec-row">
       <span class="drag-handle" data-drag data-ei="${ei}" aria-label="Drag to reorder">⠿</span>
       <button class="ex-collapsed" data-act="toggle-expand" data-ei="${ei}">
         <span class="ec-name">${ex.name}</span>
+        ${variant ? `<span class="ec-var">${escAttr(variant)}</span>` : ""}
         <span class="ec-summary">${entrySummary(ex, entry)}</span>
         ${flags}
         <span class="ec-chev">›</span>
@@ -1484,6 +1564,21 @@ function entryCard(entry, ei) {
     bodyRows = `${head}${setRows}<button class="addset" data-act="add-set" data-ei="${ei}">+ Add set</button>`;
   }
 
+  // --- Variant row: which implement, and whether it's one side at a time ---
+  let variantHtml = "";
+  if (!cardio) {
+    const opts = exEquipment(ex);
+    const eqChips = opts.map((q) =>
+      `<button class="chip ${entry.equipment === q ? "active" : ""}" data-act="entry-equip" data-ei="${ei}" data-q="${q}">${equipmentLabel(q)}</button>`
+    ).join("");
+    const sideChip = ex.unilateral
+      ? `<button class="chip ${entry.perSide ? "active" : ""}" data-act="entry-side" data-ei="${ei}">One side at a time</button>`
+      : "";
+    if (eqChips || sideChip) {
+      variantHtml = `<div class="variant-row"><div class="chip-row">${eqChips}${sideChip}</div></div>`;
+    }
+  }
+
   const tagsHtml = (ex.muscles || []).length
     ? `<span class="ex-tags">${ex.muscles.map((m) => `<span class="ex-tag">${m}</span>`).join("")}</span>`
     : "";
@@ -1526,6 +1621,7 @@ function entryCard(entry, ei) {
 
   return `<div class="ex-card expanded">
     ${headHtml}
+    ${variantHtml}
     ${bodyRows}
     <div class="ex-actions">
       <button class="mini-chip ${entry.painOpen && !pain ? "active" : ""}" data-act="ex-pain-toggle" data-ei="${ei}" style="${painStyle}">⚠ ${painLabel}</button>
@@ -1578,6 +1674,7 @@ function describeSet(ex, s) {
 }
 
 // One dense line summarizing an entry (shown when the card is collapsed).
+// The variant is rendered as its own badge, so it's deliberately not repeated here.
 function entrySummary(ex, entry) {
   if (ex.type === "cardio") {
     const s = entry.sets[0] || {};
@@ -1661,6 +1758,10 @@ function viewExerciseForm() {
   const chips = bank.map((m) =>
     `<button class="chip ${selected.includes(m) ? "active" : ""}" data-act="toggle-tag" data-m="${escAttr(m)}">${m}</button>`
   ).join("");
+  const equip = state.picker.newEquipment || [];
+  const equipChips = EQUIPMENT.map((q) =>
+    `<button class="chip ${equip.includes(q.id) ? "active" : ""}" data-act="toggle-equip" data-q="${q.id}">${q.label}</button>`
+  ).join("");
 
   return `<div class="app">
     ${header({ back: true, backAct: "close-create", backLabel: editing ? "Back" : "Cancel" })}
@@ -1674,9 +1775,14 @@ function viewExerciseForm() {
         <button class="chip" data-act="add-tag">Add</button>
       </div>
 
+      <div class="eyebrow" style="margin:20px 2px 4px;">Equipment <span style="color:var(--muted-2);font-weight:600;">· pick the versions you do</span></div>
+      <div class="form-hint">One exercise, several versions — you choose which one you used when logging a set.</div>
+      <div class="chip-row">${equipChips}</div>
+
       <div class="eyebrow" style="margin:20px 2px 10px;">Logging</div>
       <div class="chip-row">
         <button class="chip ${state.picker.newBodyweight ? "active" : ""}" data-act="toggle-bodyweight">Bodyweight (reps only)</button>
+        <button class="chip ${state.picker.newUnilateral ? "active" : ""}" data-act="toggle-unilateral">One side at a time</button>
       </div>
       ${state.picker.newBodyweight ? "" : `<div class="chip-row" style="margin-top:8px;">
         <span style="align-self:center;color:var(--muted);font-size:0.85rem;margin-right:2px;">Load unit:</span>
@@ -1802,7 +1908,9 @@ function viewDetail() {
       summary = entrySummary(ex, entry);
     }
     const img = ex.image ? `<img class="d-ex-img" src="/api/file/${ex.image}" loading="lazy" alt="">` : "";
+    const variant = variantLabel(entry, false);
     const sub = [];
+    if (variant) { sub.push(`<span class="d-ex-var">${escAttr(variant)}</span>`); }
     if (entry.pain) { sub.push(`<span style="color:${heatColor(entry.pain.level)};font-weight:700;">⚠ ${escAttr(entry.pain.cat)} ${entry.pain.level}</span>`); }
     if (entry.note) { sub.push(`<span class="d-ex-note">${escAttr(entry.note)}</span>`); }
     return `<button class="d-ex" data-act="ex-info" data-id="${escAttr(ex.id)}">
@@ -1864,12 +1972,12 @@ function viewDetail() {
 function openExInfo(id) { state.exInfoId = id; go("exinfo"); }
 
 function exStats(id) {
-  let count = 0, lastAt = 0, lastSets = null;
+  let count = 0, lastAt = 0, lastSets = null, lastEntry = null;
   for (const w of state.workouts) {
     const e = w.entries.find((en) => en.exerciseId === id);
-    if (e) { count++; if (w.startedAt > lastAt) { lastAt = w.startedAt; lastSets = e.sets; } }
+    if (e) { count++; if (w.startedAt > lastAt) { lastAt = w.startedAt; lastSets = e.sets; lastEntry = e; } }
   }
-  return { count, lastAt, lastSets };
+  return { count, lastAt, lastSets, lastEntry };
 }
 
 function viewExInfo() {
@@ -1884,8 +1992,20 @@ function viewExInfo() {
     ? `<div class="ex-tags" style="justify-content:center;margin-top:10px;">${ex.muscles.map((m) => `<span class="ex-tag">${escAttr(m)}</span>`).join("")}</div>`
     : "";
   const lastStr = st.lastAt ? fmtDate(st.lastAt) : "—";
+  const lastVariant = st.lastEntry ? variantLabel(st.lastEntry, false) : "";
   const lastSets = st.lastSets && st.lastSets.length
     ? st.lastSets.map((s) => ex.type === "cardio" ? describeSet(ex, s) : (ex.bodyweight || s.weight == null ? `${s.reps}` : `${s.reps} × ${s.weight} ${loadUnit(ex)}`)).join("  ·  ")
+    : "";
+  // Versions this movement can be done in (set on the exercise, picked per set).
+  const variants = exEquipment(ex).map((q) => equipmentLabel(q)).concat(ex.unilateral ? ["One side at a time"] : []);
+  const variantsHtml = variants.length
+    ? `<div class="finish-block" style="margin-top:16px;"><span class="eyebrow">Versions</span>
+        <div class="chip-row" style="margin-top:8px;">${variants.map((v) => `<span class="chip">${escAttr(v)}</span>`).join("")}</div></div>`
+    : "";
+  const goals = state.goals.filter((g) => g.kind === "exercise" && g.exerciseId === ex.id);
+  const goalsHtml = goals.length
+    ? `<div class="finish-block" style="margin-top:16px;"><span class="eyebrow" style="display:block;margin-bottom:10px;">Targets</span>
+        <div class="goal-list">${goals.map(exerciseGoalBar).join("")}</div></div>`
     : "";
   return `<div class="app">
     ${header({ back: true, backLabel: "Back", action: canEdit ? `<button class="back-btn" data-act="edit-ex" data-id="${ex.id}">Edit ›</button>` : "" })}
@@ -1897,7 +2017,9 @@ function viewExInfo() {
         <div class="dstat"><div class="v tnum">${st.count}</div><div class="k">Times done</div></div>
         <div class="dstat"><div class="v" style="font-size:1.05rem;">${lastStr}</div><div class="k">Last</div></div>
       </div>
-      ${lastSets ? `<div class="finish-block" style="margin-top:16px;"><span class="eyebrow">Last time</span><div class="prog-notes tnum">${lastSets}</div></div>` : ""}
+      ${lastSets ? `<div class="finish-block" style="margin-top:16px;"><span class="eyebrow">Last time${lastVariant ? ` · ${escAttr(lastVariant)}` : ""}</span><div class="prog-notes tnum">${lastSets}</div></div>` : ""}
+      ${goalsHtml}
+      ${variantsHtml}
     </main>
   </div>`;
 }
@@ -3937,6 +4059,7 @@ function weeklyGoalCount(g) {
 }
 
 function goalColor(g) {
+  if (g.kind === "exercise") { return TYPE_COLORS.gym; }
   return (g.filter && TYPE_COLORS[g.filter]) || DEFAULT_TYPE_COLOR;
 }
 function goalFilterLabel(filter) {
@@ -3962,6 +4085,72 @@ function weeklyGoalBar(g) {
 }
 
 // Home "This week" block: weekly progress bars, or a prompt if none set.
+/* ---- Exercise goals (a number to chase on one movement) ---- */
+// What an exercise goal is measured in: kilos, seconds for a timed hold, or
+// reps for a bodyweight movement (no external load to put on the bar).
+function goalUnitFor(ex) { return ex.bodyweight ? "reps" : loadUnit(ex); }
+
+// A goal only counts sets of the right variant, and (for kg goals) sets that hit
+// the rep floor — "100 kg" means nothing without saying for how many.
+function goalMinReps(g, ex) {
+  return !ex.bodyweight && loadUnit(ex) === "kg" && g.reps > 0 ? g.reps : 0;
+}
+
+// Best qualifying set ever logged against this goal.
+function exerciseGoalBest(g) {
+  const ex = exById(g.exerciseId);
+  const byReps = !!ex.bodyweight;
+  const minReps = goalMinReps(g, ex);
+  let best = null, at = 0;
+  for (const w of state.workouts) {
+    for (const en of w.entries) {
+      if (en.exerciseId !== g.exerciseId) { continue; }
+      if (g.equipment && en.equipment !== g.equipment) { continue; }
+      for (const s of en.sets || []) {
+        const v = byReps ? s.reps : s.weight;
+        if (typeof v !== "number") { continue; }
+        if (minReps && !(s.reps >= minReps)) { continue; }
+        if (best == null || v > best) { best = v; at = w.startedAt; }
+      }
+    }
+  }
+  return { best, at };
+}
+
+// "Barbell · ≥ 5 reps" — the conditions a set has to meet to count.
+function goalScopeLabel(g) {
+  const ex = exById(g.exerciseId);
+  const bits = [];
+  if (g.equipment) { bits.push(equipmentLabel(g.equipment)); }
+  const minReps = goalMinReps(g, ex);
+  if (minReps) { bits.push(`≥ ${minReps} reps`); }
+  return bits.join(" · ");
+}
+
+function fmtGoalVal(v) { return Math.round(v * 100) / 100; }
+
+function exerciseGoalBar(g) {
+  const ex = exById(g.exerciseId);
+  const unit = goalUnitFor(ex);
+  const target = g.targetValue || 0;
+  const { best, at } = exerciseGoalBest(g);
+  const cur = best || 0;
+  const pct = target > 0 ? Math.min(100, Math.round((cur / target) * 100)) : 0;
+  const done = target > 0 && cur >= target;
+  const color = goalColor(g);
+  const scope = goalScopeLabel(g);
+  const sub = [scope, best != null ? `best ${fmtGoalVal(best)} ${unit} · ${fmtDate(at)}` : "nothing logged yet"]
+    .filter(Boolean).join(" · ");
+  return `<button class="goal-card" data-act="edit-goal" data-id="${g.id}">
+    <div class="goal-top">
+      <span class="goal-title"><span class="type-dot" style="background:${color}"></span>${escAttr(g.title)}</span>
+      <span class="goal-count${done ? " done" : ""}" style="${done ? `color:${color}` : ""}">${fmtGoalVal(cur)}/${fmtGoalVal(target)} ${unit}${done ? " ✓" : ""}</span>
+    </div>
+    <div class="goal-bar"><div class="goal-fill${done ? " done" : ""}${!done && cur > 0 ? " active" : ""}" style="width:${pct}%;background:${color};color:${color}"></div></div>
+    ${sub ? `<div class="goal-sub">${escAttr(sub)}</div>` : ""}
+  </button>`;
+}
+
 // Compact "steps today" pill, sized to sit inline on a section-head row (same
 // height as the goals header) rather than take a full card. Tapping opens the
 // Steps detail in Profile. Shows a dash until the first sync fills it in.
@@ -3995,11 +4184,16 @@ function openGoals() { go("goals"); }
 
 function viewGoals() {
   const weekly = state.goals.filter((g) => g.kind === "weekly");
+  const exercise = state.goals.filter((g) => g.kind === "exercise");
   const generic = state.goals.filter((g) => g.kind === "generic");
 
   const weeklyHtml = weekly.length
     ? `<div class="goal-list">${weekly.map(weeklyGoalBar).join("")}</div>`
     : `<div class="empty" style="padding:20px;">No weekly goals yet — add one to see your progress on the home screen.</div>`;
+
+  const exerciseHtml = exercise.length
+    ? `<div class="goal-list">${exercise.map(exerciseGoalBar).join("")}</div>`
+    : `<div class="empty" style="padding:20px;">No lifts to chase yet — e.g. bench 100 kg, or a 90 s plank.</div>`;
 
   const genericHtml = generic.length
     ? `<div class="goal-list">${generic.map((g) => `<div class="goal-row${g.done ? " done" : ""}">
@@ -4013,6 +4207,8 @@ function viewGoals() {
     <main>
       <div class="section-head"><span class="eyebrow">This week</span></div>
       ${weeklyHtml}
+      <div class="section-head"><span class="eyebrow">Exercise targets</span></div>
+      ${exerciseHtml}
       <div class="section-head"><span class="eyebrow">Goals</span></div>
       ${genericHtml}
       <button class="add-ex-btn" data-act="new-goal" style="margin-top:16px;">+  New goal</button>
@@ -4023,9 +4219,18 @@ function viewGoals() {
 function openGoalEdit(id) {
   const g = id ? state.goals.find((x) => x.id === id) : null;
   state.goalEdit = g
-    ? { id: g.id, kind: g.kind, title: g.title, target: g.target || 3, filter: g.filter || "" }
-    : { id: null, kind: "weekly", title: "", target: 3, filter: "" };
+    ? {
+        id: g.id, kind: g.kind, title: g.title, target: g.target || 3, filter: g.filter || "",
+        exerciseId: g.exerciseId || "", targetValue: g.targetValue != null ? g.targetValue : "",
+        reps: g.reps != null ? g.reps : "", equipment: g.equipment || "",
+      }
+    : { id: null, kind: "weekly", title: "", target: 3, filter: "", exerciseId: "", targetValue: "", reps: "", equipment: "" };
   go("goaledit");
+}
+
+// Gym exercises, for the exercise-goal picker.
+function goalExercises() {
+  return state.exercises.filter((e) => e.type !== "cardio").sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function viewGoalEdit() {
@@ -4036,6 +4241,7 @@ function viewGoalEdit() {
   const kindSeg = !editing
     ? `<div class="seg" style="margin-bottom:16px;">
         <button class="seg-btn ${g.kind === "weekly" ? "active" : ""}" data-act="goal-kind" data-kind="weekly">Weekly</button>
+        <button class="seg-btn ${g.kind === "exercise" ? "active" : ""}" data-act="goal-kind" data-kind="exercise">Exercise</button>
         <button class="seg-btn ${g.kind === "generic" ? "active" : ""}" data-act="goal-kind" data-kind="generic">Generic</button>
       </div>`
     : "";
@@ -4050,7 +4256,44 @@ function viewGoalEdit() {
         </div></div>`
     : "";
 
-  const placeholder = g.kind === "weekly" ? "e.g. Train 4× this week" : "e.g. Bench press 100 kg";
+  let exerciseFields = "";
+  if (g.kind === "exercise") {
+    const list = goalExercises();
+    const ex = g.exerciseId ? exById(g.exerciseId) : null;
+    // The unit follows the exercise: kg on the bar, seconds on a timed hold,
+    // reps when it's bodyweight and there's no load to add.
+    const unit = ex ? goalUnitFor(ex) : "kg";
+    const opts = ex ? exEquipment(ex) : [];
+    const equipRow = opts.length
+      ? `<div class="finish-block"><span class="eyebrow">Which version counts</span>
+          <div class="chip-row">
+            <button class="chip ${!g.equipment ? "active" : ""}" data-act="goal-equip" data-q="">Any</button>
+            ${opts.map((q) => `<button class="chip ${g.equipment === q ? "active" : ""}" data-act="goal-equip" data-q="${q}">${equipmentLabel(q)}</button>`).join("")}
+          </div></div>`
+      : "";
+    const repsRow = unit === "kg"
+      ? `<div class="finish-block"><span class="eyebrow">For at least (reps) <span style="color:var(--muted-2);font-weight:600;">· optional</span></span>
+          <input class="picker-search" type="number" inputmode="numeric" min="1" placeholder="Any" value="${escAttr(g.reps)}" data-act="goal-reps"></div>`
+      : "";
+    exerciseFields = `
+      <div class="finish-block"><span class="eyebrow">Exercise</span>
+        <select class="picker-search select-input" data-act="goal-exercise">
+          <option value="" ${!g.exerciseId ? "selected" : ""}>Choose an exercise…</option>
+          ${list.map((e) => `<option value="${escAttr(e.id)}" ${g.exerciseId === e.id ? "selected" : ""}>${escAttr(e.name)}</option>`).join("")}
+        </select>
+        ${list.length ? "" : `<div class="form-hint">Your library is empty — add an exercise in a workout first.</div>`}
+      </div>
+      <div class="finish-block"><span class="eyebrow">Target (${unit})</span>
+        <input class="picker-search" type="number" inputmode="decimal" min="0" step="any" value="${escAttr(g.targetValue)}" data-act="goal-target-value"></div>
+      ${repsRow}
+      ${equipRow}`;
+  }
+
+  const placeholder = g.kind === "weekly"
+    ? "e.g. Train 4× this week"
+    : g.kind === "exercise"
+      ? (g.exerciseId ? exById(g.exerciseId).name : "Defaults to the exercise name")
+      : "e.g. Run a 5 k";
 
   return `<div class="app">
     ${header({ back: true, backLabel: "Goals" })}
@@ -4058,8 +4301,9 @@ function viewGoalEdit() {
       <div class="section-head"><span class="eyebrow">${editing ? "Edit goal" : "New goal"}</span></div>
       ${kindSeg}
       <div class="finish-block"><span class="eyebrow">Title</span>
-        <input class="picker-search" type="text" value="${escAttr(g.title)}" placeholder="${placeholder}" data-act="goal-title"></div>
+        <input class="picker-search" type="text" value="${escAttr(g.title)}" placeholder="${escAttr(placeholder)}" data-act="goal-title"></div>
       ${weeklyFields}
+      ${exerciseFields}
     </main>
     <div class="footer">
       ${editing ? `<button class="btn btn-ghost" data-act="del-goal" data-id="${g.id}">Delete</button>` : ""}
@@ -4071,7 +4315,9 @@ function viewGoalEdit() {
 async function saveGoalEdit() {
   const g = state.goalEdit;
   if (!g) { return; }
-  const title = (g.title || "").trim();
+  let title = (g.title || "").trim();
+  // An exercise goal reads fine as just the movement's name, so don't demand one.
+  if (!title && g.kind === "exercise" && g.exerciseId) { title = exById(g.exerciseId).name; }
   if (!title) { toast("Name the goal"); return; }
   const payload = g.id
     ? { id: g.id, title }
@@ -4081,6 +4327,16 @@ async function saveGoalEdit() {
     if (!Number.isFinite(target) || target < 1) { toast("Target must be at least 1"); return; }
     payload.target = target;
     payload.filter = g.filter || null;
+  }
+  if (g.kind === "exercise") {
+    if (!g.exerciseId) { toast("Pick an exercise"); return; }
+    const targetValue = Number(g.targetValue);
+    if (!Number.isFinite(targetValue) || targetValue <= 0) { toast("Set a target above 0"); return; }
+    const reps = Math.round(Number(g.reps));
+    payload.exerciseId = g.exerciseId;
+    payload.targetValue = targetValue;
+    payload.reps = Number.isFinite(reps) && reps > 0 ? reps : null;
+    payload.equipment = g.equipment || null;
   }
   let saved;
   try { saved = await apiPost("/api/goals", payload); }
@@ -4265,6 +4521,10 @@ app.addEventListener("click", (e) => {
     }
     case "toggle-tag": toggleNewTag(t.dataset.m); break;
     case "add-tag": addNewTag(state.picker.newTagText); break;
+    case "toggle-equip": toggleNewEquipment(t.dataset.q); break;
+    case "toggle-unilateral": state.picker.newUnilateral = !state.picker.newUnilateral; render(); break;
+    case "entry-equip": setEntryEquipment(ei, t.dataset.q); break;
+    case "entry-side": toggleEntrySide(ei); break;
     case "toggle-bodyweight": state.picker.newBodyweight = !state.picker.newBodyweight; render(); break;
     case "set-unit": state.picker.newUnit = t.dataset.unit; render(); break;
     case "ex-img-pick": { const el = document.getElementById("ex-img-file"); if (el) { el.click(); } break; }
@@ -4414,6 +4674,7 @@ app.addEventListener("click", (e) => {
     case "toggle-goal-done": toggleGoalDone(t.dataset.id); break;
     case "goal-kind": if (state.goalEdit) { state.goalEdit.kind = t.dataset.kind; render(); } break;
     case "goal-filter": if (state.goalEdit) { state.goalEdit.filter = t.dataset.filter; render(); } break;
+    case "goal-equip": if (state.goalEdit) { state.goalEdit.equipment = t.dataset.q || ""; render(); } break;
     case "save-goal": saveGoalEdit(); break;
     case "del-goal": deleteGoalById(t.dataset.id); break;
 
@@ -4438,6 +4699,10 @@ app.addEventListener("input", (e) => {
   else if (act === "detail-note") { changeWorkoutNotes(t.dataset.id, t.value); }
   else if (act === "goal-title") { if (state.goalEdit) { state.goalEdit.title = t.value; } }
   else if (act === "goal-target") { if (state.goalEdit) { state.goalEdit.target = t.value; } }
+  else if (act === "goal-target-value") { if (state.goalEdit) { state.goalEdit.targetValue = t.value; } }
+  else if (act === "goal-reps") { if (state.goalEdit) { state.goalEdit.reps = t.value; } }
+  // Changing the exercise changes the unit (and which variants exist), so re-render.
+  else if (act === "goal-exercise") { if (state.goalEdit) { state.goalEdit.exerciseId = t.value; state.goalEdit.equipment = ""; render(); } }
   else if (act === "ex-note") { setExNote(parseInt(t.dataset.ei, 10), t.value); }
   else if (act === "new-name") { state.picker.newName = t.value; }
   else if (act === "new-tag-text") { state.picker.newTagText = t.value; }
