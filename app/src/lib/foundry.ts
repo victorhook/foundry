@@ -3235,9 +3235,13 @@ function deletePainNoteById(id) {
   history.back();
 }
 
+// Pain notes allow a 0 ("no pain") level; render it neutral rather than the
+// teal low-end so "none" reads differently from "mild". 1-10 use the heat scale.
+function painColor(level) { return level <= 0 ? "var(--muted-2)" : heatColor(level); }
+
 function painChips(items) {
   return (items || [])
-    .map((it) => `<span class="pain-chip" style="background:${heatColor(it.level)};color:#14171C;border-color:transparent;">${escAttr(it.cat)} <span class="sev">${it.level}</span></span>`)
+    .map((it) => `<span class="pain-chip" style="background:${painColor(it.level)};color:#14171C;border-color:transparent;">${escAttr(it.cat)} <span class="sev">${it.level}</span></span>`)
     .join("");
 }
 
@@ -3426,14 +3430,14 @@ function viewPainEdit() {
   // Per-area buttons carry data-cat so the handler knows which item to set.
   const painLevelBtns = (cat, sel) => {
     let out = "";
-    for (let i = 1; i <= PAIN_MAX; i++) {
+    for (let i = 0; i <= PAIN_MAX; i++) {
       const on = sel === i;
-      out += `<button class="rpe-btn ${on ? "sel" : ""}" data-act="pain-level" data-cat="${escAttr(cat)}" data-v="${i}" style="${on ? `background:${heatColor(i)};` : ""}">${i}</button>`;
+      out += `<button class="rpe-btn ${on ? "sel" : ""}" data-act="pain-level" data-cat="${escAttr(cat)}" data-v="${i}" style="${on ? `background:${painColor(i)};` : ""}">${i}</button>`;
     }
     return out;
   };
   const scales = e.items.map((it) => `<div class="pain-item">
-    <div class="pain-item-head"><span style="color:${heatColor(it.level)};font-weight:800;">${escAttr(it.cat)}</span><span class="tnum" style="color:var(--muted);">${it.level}/10</span></div>
+    <div class="pain-item-head"><span style="color:${painColor(it.level)};font-weight:800;">${escAttr(it.cat)}</span><span class="tnum" style="color:var(--muted);">${it.level}/10</span></div>
     <div class="rpe-scale">${painLevelBtns(it.cat, it.level)}</div>
   </div>`).join("");
   return `<div class="app">

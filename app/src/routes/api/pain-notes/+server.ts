@@ -16,9 +16,9 @@ function parseItems(raw: unknown): PainItem[] {
 		}
 		let level = Math.round(Number((it && it.level) ?? 0));
 		if (!Number.isFinite(level)) {
-			level = 1;
+			level = 0;
 		}
-		level = Math.max(1, Math.min(10, level));
+		level = Math.max(0, Math.min(10, level)); // 0 = "no pain" is valid
 		out.push({ cat, level });
 	}
 	return out;

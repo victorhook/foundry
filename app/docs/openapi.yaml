@@ -196,7 +196,7 @@ components:
       type: object
       description: >
         A standalone pain log (independent of workouts): a timestamped entry with
-        one or more body areas each rated 1–10, plus an optional free-text note.
+        one or more body areas each rated 0–10 (0 = no pain), plus an optional note.
       properties:
         id: { type: string }
         at:
@@ -210,7 +210,7 @@ components:
             type: object
             properties:
               cat: { type: string, description: Body area, e.g. "Knees". }
-              level: { type: integer, description: Severity 1–10. }
+              level: { type: integer, description: Severity 0–10 (0 = no pain). }
         createdAt: { type: integer, format: int64 }
     Reminder:
       type: object
