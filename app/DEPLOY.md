@@ -138,6 +138,24 @@ a Caddy-fronted install. See [`docs/ai-chat.md`](docs/ai-chat.md) for both.
 shell commands as the service user; the doc is explicit about where that boundary
 actually is and how to tighten it.
 
+## Read-only API + MCP connector (optional)
+
+One env var opens two read-only integrations — scripts and custom GPT Actions
+over `GET /api/*`, and an MCP server at `POST /mcp` that ChatGPT, Claude or an
+editor can connect to as a tool source:
+
+```
+API_TOKEN=<long random string>         # e.g. `openssl rand -hex 32`
+```
+
+Leave it unset and both are disabled. The token is read-only — it cannot create
+or change anything — but it does grant full read access to your training data,
+so treat it like a password and rotate it if it leaks. No proxy change is
+needed; both the nginx and Caddy configs already pass these paths through.
+
+Setup and troubleshooting: [`docs/mcp.md`](docs/mcp.md) and
+[`docs/api.md`](docs/api.md).
+
 ## Google Fit steps (optional)
 
 Foundry can pull your daily step count from Google Fit via its REST API. It's

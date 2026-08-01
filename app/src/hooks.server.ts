@@ -22,10 +22,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 	let userId = verifySession(token);
 	const viaCookie = userId !== null;
 
-	// Automation/read API: a bearer token grants READ-ONLY access (GET only) as
-	// the single app user. Enabled by setting API_TOKEN; no session cookie is
-	// issued for these requests. See docs/api.md.
-	if (userId === null && event.request.method === 'GET') {
+	// Automation/read API: a bearer token grants READ-ONLY access as the single
+	// app user. Enabled by setting API_TOKEN; no session cookie is issued for
+	// these requests. See docs/api.md.
+	//
+	// GET only, with one exception: /mcp is JSON-RPC and so must be POSTed. Every
+	// tool it exposes is a query (see $lib/server/mcp), and no other POST route
+	// is reachable this way, so the token still can't change anything.
+	const bearerAllowed =
+		event.request.method === 'GET' ||
+		(event.request.method === 'POST' && event.url.pathname.replace(/\/$/, '') === '/mcp');
+	if (userId === null && bearerAllowed) {
 		const apiToken = env.API_TOKEN;
 		const auth = event.request.headers.get('authorization');
 		if (apiToken && auth && safeEqual(auth, `Bearer ${apiToken}`)) {

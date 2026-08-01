@@ -24,7 +24,8 @@ curl -H "Authorization: Bearer $API_TOKEN" https://<your-host>/api/data
 ```
 
 - Only `GET` is accepted with a bearer token — the token cannot create or
-  modify anything.
+  modify anything. The one non-GET path is `POST /mcp`, which is JSON-RPC and
+  so has to be a POST; every tool it exposes is a read. See [`mcp.md`](mcp.md).
 - Bearer requests never receive a session cookie.
 - Requests without a valid cookie **or** matching bearer token get `401`.
 - `/api/chat*` is the one exception: AI chat transcripts require a browser
@@ -65,6 +66,15 @@ Example — list workout dates and their exercise counts:
 curl -s -H "Authorization: Bearer $API_TOKEN" https://<your-host>/api/data \
   | jq '.workouts[] | {date: (.startedAt/1000 | todate), exercises: (.entries | length)}'
 ```
+
+## Use with ChatGPT
+
+Two options, both using the same `API_TOKEN`:
+
+- **[MCP connector](mcp.md)** — twelve focused read-only tools at `POST /mcp`,
+  so the assistant fetches just what a question needs. Also works with Claude
+  and editors. Usually the better choice.
+- **Custom GPT Action** (below) — one `GET /api/data` dump, ChatGPT only.
 
 ## Use with ChatGPT (custom GPT Action)
 
