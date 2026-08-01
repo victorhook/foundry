@@ -1074,7 +1074,11 @@
   .chat-row.user .chat-bubble {
     background: var(--accent); color: #14171C; font-weight: 600;
     border-bottom-right-radius: 5px;
+    padding: 8px 13px;
   }
+  /* The user's own words are one paragraph; drop the block spacing that a
+     multi-part reply needs. */
+  .chat-row.user .chat-bubble p { margin: 0; }
   .chat-row.bot .chat-bubble {
     background: var(--surface); border: 1px solid var(--line);
     border-bottom-left-radius: 5px;
@@ -1186,9 +1190,10 @@
   }
 
   .chat-composer {
-    flex: 0 0 auto; display: flex; gap: 9px; align-items: flex-end;
+    flex: 0 0 auto; display: flex; gap: 10px; align-items: flex-end;
     padding: 10px var(--pad) calc(10px + env(safe-area-inset-bottom));
-    border-top: 1px solid var(--line); background: var(--ground);
+    border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+    background: var(--ground);
   }
   body.kb-open .chat-composer { padding-bottom: 10px; }
   .chat-input {
@@ -1198,6 +1203,15 @@
     background: var(--surface); border: 1px solid var(--line);
     color: var(--text); font-size: 0.95rem; line-height: 1.4;
   }
+  .chat-input::placeholder { color: var(--muted-2); }
+  .chat-input:focus,
+  .chat-input:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .chat-input { scrollbar-width: none; }
+  .chat-input::-webkit-scrollbar { display: none; }
   .chat-input:disabled { opacity: 0.55; }
   .chat-send {
     flex: 0 0 auto; width: var(--tap); height: var(--tap);

@@ -3015,10 +3015,14 @@ function fmtDay(iso) {
 let pdfjsLib = null;
 async function getPdfjs() {
   if (!pdfjsLib) {
-    pdfjsLib = await import("pdfjs-dist");
+    // The *legacy* build, not the default one: pdf.js 5.x calls
+    // Map.prototype.getOrInsertComputed, which only exists in Chrome 137+.
+    // Older Android webviews throw "getOrInsertComputed is not a function";
+    // the legacy bundle polyfills it. Keep the worker below on legacy too.
+    pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
     // Serve pdf.js's worker file verbatim from /static (see static/pdf.worker.min.mjs).
     // Letting Vite re-bundle the already-minified worker (?worker/?url) mangled it
-    // on some Android builds ("getOnInsertComputed is not a function").
+    // on some Android builds.
     pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
   }
   return pdfjsLib;
@@ -3761,18 +3765,29 @@ const TOOL_ICONS = {
 function toolChips(tools) {
   if (!tools || !tools.length) { return ""; }
   return tools.map((t) => {
-    const ico = TOOL_ICONS[t.name] || "\u{1F527}";
+    const ico = TOOL_ICONS[t.name] || (t.name.startsWith("mcp__") ? "\u{1F4CA}" : "\u{1F527}");
     const detail = t.detail ? `<span class="chip-detail">${escAttr(t.detail.length > 70 ? t.detail.slice(0, 67) + "…" : t.detail)}</span>` : "";
-    return `<div class="tool-chip">${ico} <span class="chip-name">${escAttr(t.name)}</span>${detail}</div>`;
+    return `<div class="tool-chip">${ico} <span class="chip-name">${escAttr(toolLabel(t.name))}</span>${detail}</div>`;
   }).join("");
 }
 
 // A turn can run twenty-odd commands. Listing them all buries the answer, so the
 // default is one line — how many steps, and which tools — with the commands
 // themselves a tap away for when you do want to audit what ran.
+// `mcp__foundry__list_workouts` is a wire name, not something to show a user.
+function toolLabel(name) {
+  return String(name).replace(/^mcp__[^_]+__/, "");
+}
+
+// ToolSearch is the model locating its own tools — noise in a trace meant to
+// show what it did with the owner's data.
+function shownTools(tools) {
+  return (tools || []).filter((t) => t.name !== "ToolSearch");
+}
+
 function toolSummary(tools) {
   const counts = new Map();
-  for (const t of tools) { counts.set(t.name, (counts.get(t.name) || 0) + 1); }
+  for (const t of tools) { counts.set(toolLabel(t.name), (counts.get(toolLabel(t.name)) || 0) + 1); }
   const parts = [...counts].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name));
   const steps = tools.length === 1 ? "1 step" : `${tools.length} steps`;
   return `${steps} · ${parts.join(", ")}`;
@@ -3780,8 +3795,9 @@ function toolSummary(tools) {
 
 // Mid-turn: the counts plus what it's doing right now, so a long turn reads as
 // progress rather than a stall — without stacking a chip per command.
-function liveTrace(tools) {
-  if (!tools || !tools.length) { return ""; }
+function liveTrace(all) {
+  const tools = shownTools(all);
+  if (!tools.length) { return ""; }
   const last = tools[tools.length - 1];
   const ico = TOOL_ICONS[last.name] || "\u{1F527}";
   const detail = last.detail
@@ -3790,8 +3806,9 @@ function liveTrace(tools) {
   return `<span class="tt-text">${escAttr(toolSummary(tools))}</span> ${ico} ${detail}`;
 }
 
-function toolTrace(tools, msgId) {
-  if (!tools || !tools.length) { return ""; }
+function toolTrace(all, msgId) {
+  const tools = shownTools(all);
+  if (!tools.length) { return ""; }
   const open = !!(msgId && state.chatToolsOpen[msgId]);
   const toggle = msgId
     ? `<button class="tool-trace" data-act="toggle-tools" data-id="${msgId}" aria-expanded="${open}">
@@ -4393,6 +4410,13 @@ app.addEventListener("click", (e) => {
     /* ---- Exercise info (from workout summary) ---- */
     case "ex-info": openExInfo(t.dataset.id); break;
   }
+});
+
+app.addEventListener("keydown", (e) => {
+  const t = e.target.closest('[data-act="chat-input"]');
+  if (!t || e.key !== "Enter" || e.shiftKey || e.isComposing) { return; }
+  e.preventDefault();
+  sendChat();
 });
 
 app.addEventListener("input", (e) => {
