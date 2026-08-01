@@ -3709,9 +3709,11 @@ function viewPain() {
   const cards = list.map((p) => {
     const t = new Date(p.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     const noteLine = p.note ? `<div class="note-text">${escAttr(p.note)}</div>` : "";
-    return `<button class="note-card" data-act="edit-painnote" data-id="${p.id}">
-      <div class="note-date">${fmtDate(p.at)} · ${t}</div>
-      ${p.items && p.items.length ? `<div class="pain-grid">${painChips(p.items)}</div>` : ""}
+    return `<button class="note-card pn-card" data-act="edit-painnote" data-id="${p.id}">
+      <div class="pn-head">
+        <span class="note-date">${fmtDate(p.at)} · ${t}</span>
+        ${p.items && p.items.length ? `<span class="pn-chips">${painChips(p.items)}</span>` : ""}
+      </div>
       ${noteLine}
     </button>`;
   }).join("");
