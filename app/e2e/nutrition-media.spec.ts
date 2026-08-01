@@ -164,6 +164,78 @@ test('multiple photos upload in one batch', async ({ page }) => {
 	await expect(page.locator('.pgrid-img')).toHaveCount(2);
 });
 
+// Synthetic touch drag: the app's gesture code only reads touches[0].clientX/Y,
+// so constructed TouchEvents exercise the same path a finger does.
+async function swipe(page: Page, selector: string, dx: number) {
+	await page.evaluate(
+		({ selector, dx }) => {
+			const el = document.querySelector(selector) as Element;
+			const r = el.getBoundingClientRect();
+			const y = r.top + r.height / 2;
+			const x0 = r.left + r.width / 2;
+			const at = (x: number) =>
+				new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
+			const fire = (type: string, x: number) =>
+				el.dispatchEvent(
+					new TouchEvent(type, {
+						bubbles: true,
+						cancelable: true,
+						touches: type === 'touchend' ? [] : [at(x)],
+						changedTouches: [at(x)]
+					})
+				);
+			fire('touchstart', x0);
+			fire('touchmove', x0 + dx * 0.25);
+			fire('touchmove', x0 + dx);
+			fire('touchend', x0 + dx);
+		},
+		{ selector, dx }
+	);
+}
+
+test('lightbox: swipe and arrow keys move between photos', async ({ page }) => {
+	await login(page);
+	await menuNav(page, 'Photos');
+	await page.getByRole('button', { name: /New album/ }).click();
+	await page.locator('[data-act="new-album-text"]').fill('Carousel');
+	await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+	await page.locator('[data-act="pick-photo"]').waitFor();
+	await page.locator('#photo-file').setInputFiles([
+		{ name: 'a.jpg', mimeType: 'image/jpeg', buffer: TINY_JPEG },
+		{ name: 'b.jpg', mimeType: 'image/jpeg', buffer: TINY_JPEG }
+	]);
+	await page.getByRole('button', { name: /Upload 2 photos/ }).click();
+	await expect(page.locator('.pgrid-img')).toHaveCount(2);
+
+	// Open the first photo — the whole album rides in the carousel.
+	await page.locator('.pgrid-cell').first().click();
+	await expect(page.locator('.lightbox-slide')).toHaveCount(2);
+	await expect(page.locator('.lightbox-count')).toHaveText('1 / 2');
+
+	// Swipe left → next photo. The drawer must not steal the horizontal drag.
+	await swipe(page, '.lightbox-stage', -160);
+	await expect(page.locator('.lightbox-count')).toHaveText('2 / 2');
+	await expect(page.locator('#lb-track')).toHaveCSS('transform', /matrix\(1, 0, 0, 1, -\d/);
+	await expect(page.locator('.drawer.open')).toHaveCount(0);
+
+	// Past the end it stays put; swiping back returns to the first photo.
+	await swipe(page, '.lightbox-stage', -160);
+	await expect(page.locator('.lightbox-count')).toHaveText('2 / 2');
+	await swipe(page, '.lightbox-stage', 160);
+	await expect(page.locator('.lightbox-count')).toHaveText('1 / 2');
+
+	// A short drag snaps back instead of changing photo.
+	await swipe(page, '.lightbox-stage', -20);
+	await expect(page.locator('.lightbox-count')).toHaveText('1 / 2');
+
+	// Arrow keys do the same on a keyboard.
+	await page.keyboard.press('ArrowRight');
+	await expect(page.locator('.lightbox-count')).toHaveText('2 / 2');
+	await page.keyboard.press('ArrowLeft');
+	await expect(page.locator('.lightbox-count')).toHaveText('1 / 2');
+});
+
 // Nutrition tests pin a unique day so the shared e2e DB doesn't mix their totals.
 
 test('upload a program with a PDF and view it', async ({ page }) => {

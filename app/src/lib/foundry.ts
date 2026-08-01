@@ -88,6 +88,8 @@ function load() {
     programs: [],
     notes: [],
     painNotes: [],
+    // Ephemeral UI for the "Body areas" manager on the pain screen.
+    painAreas: { open: false, editing: null, text: "" },
     reminders: [],
     push: { loaded: false, configured: false, publicKey: "", permission: "default", subscribed: false },
     goals: [],
@@ -266,6 +268,13 @@ function lastUsedAt(id) {
     if (state.workouts[i].entries.some((en) => en.exerciseId === id)) { return state.workouts[i].startedAt; }
   }
   return 0;
+}
+
+// How recent an exercise is for picker ordering: the later of "last trained" and
+// "added to the library", so a just-created movement sits at the top instead of
+// sinking to the bottom of the never-used tail.
+function pickerRecency(e) {
+  return Math.max(lastUsedAt(e.id), e.createdAt || 0);
 }
 
 // Tags (muscle groups) actually used across the gym library, for the filter row.
@@ -1696,14 +1705,14 @@ function entrySummary(ex, entry) {
 }
 
 /* ---- Picker ---- */
-// Gym-only library (cardio excluded), filtered, sorted most-recently-used first.
+// Gym-only library (cardio excluded), filtered, most recently used *or added* first.
 function pickerExercises() {
   const q = state.picker.q.toLowerCase();
   const cat = state.picker.cat;
   return state.exercises
     .filter((e) => e.type !== "cardio")
     .filter((e) => (cat === "All" || (e.muscles || []).includes(cat)) && (!q || e.name.toLowerCase().includes(q)))
-    .sort((a, b) => lastUsedAt(b.id) - lastUsedAt(a.id) || a.name.localeCompare(b.name));
+    .sort((a, b) => pickerRecency(b) - pickerRecency(a) || a.name.localeCompare(b.name));
 }
 
 function pickerItemHtml(e) {
@@ -2329,6 +2338,15 @@ function loadingShell(backLabel, backTarget) {
   return `<div class="app">${header({ back: true, backLabel })}<main></main></div>`;
 }
 
+// The photos the album view is currently showing, in on-screen order — also the
+// carousel's running order, so a swipe walks the same list the grid shows.
+function visibleAlbumPhotos() {
+  const isAll = state.albumId === "__all__";
+  let photos = photosInAlbum(isAll ? null : state.albumId);
+  if (state.photoTag) { photos = photos.filter((p) => (p.tags || []).includes(state.photoTag)); }
+  return photos;
+}
+
 function viewAlbum() {
   const isAll = state.albumId === "__all__";
   const album = isAll ? { id: "__all__", name: "All photos" } : state.albums.find((a) => a.id === state.albumId);
@@ -2337,9 +2355,8 @@ function viewAlbum() {
     return loadingShell("Albums", "photos"); // data still loading after a reload
   }
 
-  let photos = photosInAlbum(isAll ? null : album.id);
+  const photos = visibleAlbumPhotos();
   const tags = allPhotoTags();
-  if (state.photoTag) { photos = photos.filter((p) => (p.tags || []).includes(state.photoTag)); }
 
   const tagRow = tags.length
     ? `<div class="cat-row">
@@ -2376,18 +2393,66 @@ function viewAlbum() {
 }
 
 function photoLightbox() {
-  const p = state.photos.find((x) => x.id === state.viewPhotoId);
-  if (!p) { return ""; }
-  const tags = (p.tags || []).map((t) => `<span class="ex-tag">${t}</span>`).join("");
-  return `<div class="lightbox" data-act="close-photo">
-    <div class="lightbox-inner" data-act="noop">
-      <img class="lightbox-img" src="/api/photos/${p.id}" alt="${escAttr(p.caption || "photo")}">
+  const photos = lightboxPhotos();
+  if (!photos.length) { return ""; }
+  const i = photos.findIndex((x) => x.id === state.viewPhotoId);
+
+  const slides = photos.map((p, n) => {
+    const tags = (p.tags || []).map((t) => `<span class="ex-tag">${t}</span>`).join("");
+    // Fetch the neighbours up front so the first swipe doesn't land on a blank.
+    const eager = Math.abs(n - i) <= 1;
+    return `<div class="lightbox-slide">
+      <img class="lightbox-img" data-act="noop" src="/api/photos/${p.id}" loading="${eager ? "eager" : "lazy"}" alt="${escAttr(p.caption || "photo")}">
       ${p.caption ? `<div class="lightbox-cap">${escAttr(p.caption)}</div>` : ""}
       ${tags ? `<div class="ex-tags" style="justify-content:center;">${tags}</div>` : ""}
-      <button class="text-btn" style="color:var(--hot);margin-top:6px;" data-act="del-photo" data-id="${p.id}">Delete photo</button>
+    </div>`;
+  }).join("");
+
+  // data-noswipe: a horizontal drag in here moves the carousel, not the drawer.
+  return `<div class="lightbox" data-act="close-photo" data-noswipe>
+    <div class="lightbox-stage" data-act="noop">
+      <div class="lightbox-track" id="lb-track" style="transform:translate3d(${-i * 100}%,0,0);">${slides}</div>
+    </div>
+    <div class="lightbox-foot" data-act="noop">
+      ${photos.length > 1 ? `<div class="lightbox-count">${i + 1} / ${photos.length}</div>` : ""}
+      <button class="text-btn" style="color:var(--hot);" data-act="del-photo">Delete photo</button>
     </div>
     <button class="lightbox-close" data-act="close-photo" aria-label="Close">×</button>
   </div>`;
+}
+
+/* ---- Lightbox carousel ----
+   The open photo sits in a track of every photo the album is showing; a swipe
+   (or an arrow key) slides to the neighbour. Moving between photos only nudges
+   the track's transform — re-rendering would replay the open animation. */
+function lightboxPhotos() {
+  if (!state.viewPhotoId) { return []; }
+  const photos = visibleAlbumPhotos();
+  if (photos.some((p) => p.id === state.viewPhotoId)) { return photos; }
+  // Open photo isn't in the visible list (stale filter) — show it on its own.
+  const p = state.photos.find((x) => x.id === state.viewPhotoId);
+  return p ? [p] : [];
+}
+function lightboxTrack() { return document.getElementById("lb-track"); }
+function lightboxSettle(i) {
+  const track = lightboxTrack();
+  if (!track) { return; }
+  track.classList.remove("dragging");
+  track.style.transform = `translate3d(${-i * 100}%,0,0)`;
+  const count = document.querySelector(".lightbox-count");
+  if (count) { count.textContent = `${i + 1} / ${lightboxPhotos().length}`; }
+  // Keep the next/previous photo fetched — flipping off lazy starts the load.
+  const imgs = track.querySelectorAll(".lightbox-img");
+  [i - 1, i, i + 1].forEach((n) => { if (imgs[n]) { imgs[n].loading = "eager"; } });
+}
+function lightboxStep(delta) {
+  const photos = lightboxPhotos();
+  const i = photos.findIndex((p) => p.id === state.viewPhotoId);
+  if (i < 0) { return; }
+  const j = i + delta;
+  const to = j >= 0 && j < photos.length ? j : i;   // past either end → snap back
+  state.viewPhotoId = photos[to].id;
+  lightboxSettle(to);
 }
 
 function uploadSheet() {
@@ -3367,6 +3432,93 @@ function deletePainNoteById(id) {
   history.back();
 }
 
+/* ---- Managing the body-area list (rename / remove) ---- */
+// How many logged things carry this area — shown before a delete so it's clear
+// what the list entry is worth.
+function painAreaUsage(cat) {
+  let n = 0;
+  (state.workouts || []).forEach((w) => {
+    (w.pains || []).forEach((p) => { if (p.cat === cat) { n++; } });
+    (w.entries || []).forEach((en) => { if (en.pain && en.pain.cat === cat) { n++; } });
+  });
+  (state.painNotes || []).forEach((p) => {
+    (p.items || []).forEach((it) => { if (it.cat === cat) { n++; } });
+  });
+  return n;
+}
+
+// A merge can leave the same area twice on one workout/note — keep the worst
+// level, matching what the server does to the stored rows.
+function dedupePainItems(items) {
+  const out = [];
+  (items || []).forEach((it) => {
+    const prev = out.find((x) => x.cat === it.cat);
+    if (!prev) { out.push(it); }
+    else if (it.level > prev.level) { prev.level = it.level; }
+  });
+  return out;
+}
+
+// Rewrite an area name across everything the client holds. The name is stored on
+// each logged occurrence (not referenced by id), so history has to be relabelled
+// here too — the server does the same to the database.
+function applyPainRename(from, to) {
+  const i = state.painCategories.indexOf(from);
+  if (i >= 0) {
+    if (state.painCategories.includes(to)) { state.painCategories.splice(i, 1); }  // merge
+    else { state.painCategories[i] = to; }
+  }
+  const relabel = (items) =>
+    dedupePainItems((items || []).map((it) => (it.cat === from ? { ...it, cat: to } : it)));
+  (state.workouts || []).forEach((w) => {
+    w.pains = relabel(w.pains);
+    (w.entries || []).forEach((en) => { if (en.pain && en.pain.cat === from) { en.pain.cat = to; } });
+  });
+  (state.painNotes || []).forEach((n) => { n.items = relabel(n.items); });
+  if (state.painNoteEdit) { state.painNoteEdit.items = relabel(state.painNoteEdit.items); }
+  const a = state.active;
+  if (a) {
+    (a.entries || []).forEach((en) => { if (en.pain && en.pain.cat === from) { en.pain.cat = to; } });
+    // The in-progress session keeps workout-level pain as { cat: level }.
+    if (a.pains && a.pains[from] != null) {
+      a.pains[to] = a.pains[to] != null ? Math.max(a.pains[to], a.pains[from]) : a.pains[from];
+      delete a.pains[from];
+    }
+    save();
+  }
+}
+
+function togglePainAreas() { state.painAreas.open = !state.painAreas.open; state.painAreas.editing = null; render(); }
+function startRenamePainArea(cat) { state.painAreas.editing = cat; state.painAreas.text = cat; render(); }
+function cancelRenamePainArea() { state.painAreas.editing = null; state.painAreas.text = ""; render(); }
+
+async function savePainAreaRename() {
+  const m = state.painAreas;
+  const from = m.editing;
+  const to = (m.text || "").trim();
+  m.editing = null;
+  m.text = "";
+  if (!from || !to || to === from) { render(); return; }
+  const merging = state.painCategories.includes(to);
+  applyPainRename(from, to);   // optimistic: history included
+  render();
+  try {
+    await apiPut("/api/pain-categories", { from, to });
+    toast(merging ? `Merged into ${to} ✓` : `Renamed to ${to} ✓`);
+  } catch (e) {
+    toast("Couldn't rename — pull down to refresh");
+  }
+}
+
+// Removing an area only takes it off the pickable list; what's already logged
+// under that name keeps it.
+function deletePainArea(cat) {
+  state.painCategories = state.painCategories.filter((c) => c !== cat);
+  if (state.painAreas.editing === cat) { state.painAreas.editing = null; }
+  render();
+  apiDelete("/api/pain-categories", { name: cat }).catch(() => toast("Couldn't remove area"));
+}
+
 // Pain notes allow a 0 ("no pain") level; render it neutral rather than the
 // teal low-end so "none" reads differently from "mild". 1-10 use the heat scale.
 function painColor(level) { return level <= 0 ? "var(--muted-2)" : heatColor(level); }
@@ -3522,6 +3674,36 @@ function remindersSection() {
     <button class="add-ex-btn" data-act="rem-add" style="margin-top:10px;">＋  Add reminder</button>`;
 }
 
+// The body-area vocabulary, with rename/remove. Renaming rewrites every logged
+// occurrence, so it's safe to fix a typo long after the fact.
+function painAreasSection() {
+  const m = state.painAreas;
+  const head = `<div class="section-head" style="margin-top:26px;">
+    <span class="eyebrow">Body areas</span>
+    <button class="back-btn" data-act="pain-areas-toggle">${m.open ? "Done" : "Manage ›"}</button>
+  </div>`;
+  if (!m.open) { return head; }
+  const rows = state.painCategories.map((c) => {
+    if (m.editing === c) {
+      return `<div class="area-row">
+        <input class="area-input" data-act="pain-area-text" value="${escAttr(m.text)}" placeholder="Area name" autofocus>
+        <button class="mini-chip active" data-act="pain-area-save">Save</button>
+        <button class="mini-chip" data-act="pain-area-cancel">Cancel</button>
+      </div>`;
+    }
+    const used = painAreaUsage(c);
+    return `<div class="area-row">
+      <span class="area-name">${escAttr(c)}</span>
+      <span class="area-used">${used ? `${used} logged` : "unused"}</span>
+      <button class="mini-chip" data-act="pain-area-rename" data-cat="${escAttr(c)}">Rename</button>
+      <button class="set-del" data-act="pain-area-del" data-cat="${escAttr(c)}" aria-label="Remove area">×</button>
+    </div>`;
+  }).join("");
+  return `${head}
+    <div class="form-hint">Renaming updates every workout and pain note that used the old name.</div>
+    ${rows ? `<div class="area-list">${rows}</div>` : `<div class="empty">No areas yet — add one when you log pain.</div>`}`;
+}
+
 function viewPain() {
   const list = state.painNotes || [];
   const cards = list.map((p) => {
@@ -3542,6 +3724,7 @@ function viewPain() {
       <div class="section-head"><span class="eyebrow">Pain log</span></div>
       ${body}
       <button class="add-ex-btn" data-act="new-painnote" style="margin-top:14px;">＋  Log pain</button>
+      ${painAreasSection()}
       ${remindersSection()}
     </main>
   </div>`;
@@ -3552,7 +3735,12 @@ function viewPainEdit() {
   if (!e) { go("pain"); return ""; }
   const editing = !!e.id;
   const selected = new Set(e.items.map((it) => it.cat));
-  const catChips = state.painCategories.map((c) =>
+  // Areas removed from the list can still sit on an older note — keep a chip for
+  // them (otherwise they'd be un-deselectable) but don't resurrect them.
+  const cats = state.painCategories.concat(
+    [...selected].filter((c) => !state.painCategories.includes(c))
+  );
+  const catChips = cats.map((c) =>
     `<button class="chip ${selected.has(c) ? "active" : ""}" data-act="pain-toggle-cat" data-cat="${escAttr(c)}">${c}</button>`
   ).join("");
   const newHtml = e.newOpen
@@ -4449,7 +4637,7 @@ app.addEventListener("click", (e) => {
     case "cancel-upload": cancelUpload(); break;
     case "open-photo": state.viewPhotoId = t.dataset.id; render(); break;
     case "close-photo": state.viewPhotoId = null; render(); break;
-    case "del-photo": deletePhotoById(t.dataset.id); break;
+    case "del-photo": deletePhotoById(t.dataset.id || state.viewPhotoId); break;
     case "noop": break;
     case "add-workout": state.newDate = null; go("choose"); break;
     case "resume-workout": if (state.active) { go("active"); } break;
@@ -4653,6 +4841,27 @@ app.addEventListener("click", (e) => {
       break;
     }
 
+    /* ---- Body areas (the pain vocabulary) ---- */
+    case "pain-areas-toggle": togglePainAreas(); break;
+    case "pain-area-rename": startRenamePainArea(t.dataset.cat); break;
+    case "pain-area-save": savePainAreaRename(); break;
+    case "pain-area-cancel": cancelRenamePainArea(); break;
+    case "pain-area-del": {
+      const cat = t.dataset.cat;
+      const used = painAreaUsage(cat);
+      state.confirm = {
+        title: `Remove "${cat}"?`,
+        body: used
+          ? `It's on ${used} logged ${used === 1 ? "entry" : "entries"} — those keep the name, you just won't be offered it again.`
+          : "It'll be gone from the list of areas you can log.",
+        ok: "Remove",
+        danger: true,
+        onOk: () => deletePainArea(cat),
+      };
+      render();
+      break;
+    }
+
     /* ---- Reminders / push ---- */
     case "push-enable": enablePush(); break;
     case "push-disable": disablePush(); break;
@@ -4684,10 +4893,12 @@ app.addEventListener("click", (e) => {
 });
 
 app.addEventListener("keydown", (e) => {
-  const t = e.target.closest('[data-act="chat-input"]');
-  if (!t || e.key !== "Enter" || e.shiftKey || e.isComposing) { return; }
-  e.preventDefault();
-  sendChat();
+  if (e.key !== "Enter" || e.shiftKey || e.isComposing) { return; }
+  const t = e.target.closest("[data-act]");
+  if (!t) { return; }
+  if (t.dataset.act === "chat-input") { e.preventDefault(); sendChat(); }
+  // Renaming a body area: Enter commits, same as tapping Save.
+  else if (t.dataset.act === "pain-area-text") { e.preventDefault(); savePainAreaRename(); }
 });
 
 app.addEventListener("input", (e) => {
@@ -4759,6 +4970,7 @@ app.addEventListener("input", (e) => {
   else if (act === "painnote-at" && t.value) { const ms = new Date(t.value).getTime(); if (Number.isFinite(ms)) { state.painNoteEdit.at = ms; } }
   else if (act === "painnote-note-text") { state.painNoteEdit.note = t.value; }
   else if (act === "pain-new-text") { state.painNoteEdit.newText = t.value; }
+  else if (act === "pain-area-text") { state.painAreas.text = t.value; }
   else if (act === "rem-time" && t.value) { setReminderTime(t.dataset.id, t.value); }
   else if (act === "wdate" && t.value) {
     const [y, m, d] = t.value.split("-").map(Number);
@@ -5089,6 +5301,48 @@ document.addEventListener("touchend", () => {
   d.panel.style.transform = "";
   d.scrim.style.opacity = "";
 }, { passive: true });
+
+/* ---- Finger-following swipe between lightbox photos ---- */
+let lbSwipe = null;
+document.addEventListener("touchstart", (e) => {
+  lbSwipe = null;
+  if (!state.viewPhotoId || e.touches.length !== 1) { return; }
+  const track = lightboxTrack();
+  if (!track || lightboxPhotos().length < 2) { return; }
+  const i = lightboxPhotos().findIndex((p) => p.id === state.viewPhotoId);
+  lbSwipe = { track, i, n: lightboxPhotos().length, x0: e.touches[0].clientX, y0: e.touches[0].clientY, w: track.offsetWidth, decided: false, horizontal: false, dx: 0 };
+}, { passive: true });
+document.addEventListener("touchmove", (e) => {
+  if (!lbSwipe) { return; }
+  const dx = e.touches[0].clientX - lbSwipe.x0, dy = e.touches[0].clientY - lbSwipe.y0;
+  if (!lbSwipe.decided) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) { return; }
+    lbSwipe.horizontal = Math.abs(dx) > Math.abs(dy) * 1.2;
+    lbSwipe.decided = true;
+    if (!lbSwipe.horizontal) { lbSwipe = null; return; }
+    lbSwipe.track.classList.add("dragging");
+  }
+  // Rubber-band at the ends so the first/last photo resists the pull.
+  const atEnd = (lbSwipe.i === 0 && dx > 0) || (lbSwipe.i === lbSwipe.n - 1 && dx < 0);
+  lbSwipe.dx = atEnd ? dx * 0.35 : dx;
+  lbSwipe.track.style.transform = `translate3d(calc(${-lbSwipe.i * 100}% + ${lbSwipe.dx}px),0,0)`;
+}, { passive: true });
+document.addEventListener("touchend", () => {
+  if (!lbSwipe) { return; }
+  const s = lbSwipe; lbSwipe = null;
+  if (!s.decided || !s.horizontal) { return; }
+  // A quarter-width throw (or 70px, whichever is shorter) changes photo.
+  const far = Math.abs(s.dx) > Math.min(70, s.w * 0.25);
+  lightboxStep(far ? (s.dx < 0 ? 1 : -1) : 0);
+}, { passive: true });
+
+document.addEventListener("keydown", (e) => {
+  if (!state.viewPhotoId || e.metaKey || e.ctrlKey || e.altKey) { return; }
+  if (e.key === "ArrowRight") { lightboxStep(1); }
+  else if (e.key === "ArrowLeft") { lightboxStep(-1); }
+  else { return; }
+  e.preventDefault();
+});
 
 /* ---- Pull-to-refresh (native is disabled by overscroll-behavior) ---- */
 let ptrEl = null;

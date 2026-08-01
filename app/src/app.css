@@ -332,6 +332,8 @@
   .goal-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .goal-count { font-weight: 800; font-size: 0.9rem; color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
   .goal-count.done { color: var(--accent); }
+  /* Exercise goals: what counts + the current best, under the bar. */
+  .goal-sub { margin-top: 8px; font-size: 0.76rem; color: var(--muted-2); }
 
   .goal-bar {
     position: relative; height: 12px; border-radius: 999px;
@@ -441,6 +443,15 @@
   button.ec-chev.open {
     background: none; padding: 0 2px; transform: rotate(270deg); color: var(--muted);
   }
+
+  /* Which version of the movement was done (equipment / one side at a time) */
+  .ec-var {
+    flex-shrink: 0; font-size: 0.64rem; font-weight: 800; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted);
+    background: var(--surface-2); padding: 3px 7px; border-radius: 6px;
+  }
+  .variant-row { padding: 0 16px 12px; margin-top: -2px; }
+  .d-ex-var { color: var(--muted); font-weight: 600; }
 
   /* Editable exercise name + tags */
   .ex-head { flex-wrap: wrap; }
@@ -568,6 +579,9 @@
     color: var(--text); font-size: 1rem; margin-bottom: 14px;
   }
   .picker-search::placeholder { color: var(--muted-2); }
+  /* Native dropdown, dressed as a Foundry field (used for the goal's exercise). */
+  .select-input { appearance: none; -webkit-appearance: none; }
+  .form-hint { font-size: 0.78rem; color: var(--muted-2); margin: 0 2px 10px; line-height: 1.45; }
   .cat-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; margin: 0 -2px 6px; scrollbar-width: none; }
   .cat-row::-webkit-scrollbar { display: none; }
   .chip {
@@ -630,6 +644,24 @@
   .pain-item:first-child { margin-top: 0; }
   .pain-item-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; font-size: 0.9rem; }
   .pain-item .rpe-scale { width: 100%; }
+
+  /* Body-area manager: one row per area, rename in place or remove */
+  .area-list {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .area-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-bottom: 1px solid var(--line);
+  }
+  .area-row:last-child { border-bottom: none; }
+  .area-name { flex: 1; min-width: 0; font-weight: 600; font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .area-used { font-size: 0.72rem; color: var(--muted-2); font-weight: 600; flex-shrink: 0; }
+  .area-input {
+    flex: 1; min-width: 0;
+    background: var(--surface-2); border: 1px solid var(--accent); border-radius: 999px;
+    color: var(--text); padding: 7px 13px; font-size: 0.85rem; font-family: inherit;
+  }
 
   /* Reminders (Web Push) */
   .rem-note {
@@ -763,7 +795,20 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     padding: 24px; gap: 12px;
   }
-  .lightbox-inner { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 100%; }
+  /* Carousel: the track is one stage wide, its slides overflow it, so a
+     translateX of -100% per step lands exactly on the next photo. */
+  .lightbox-stage { width: 100%; overflow: hidden; touch-action: pan-y; }
+  .lightbox-track {
+    display: flex; width: 100%; will-change: transform;
+    transition: transform 0.3s cubic-bezier(0.22, 0.9, 0.26, 1);
+  }
+  .lightbox-track.dragging { transition: none; }
+  .lightbox-slide {
+    flex: 0 0 100%; box-sizing: border-box; padding: 0 4px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  }
+  .lightbox-foot { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .lightbox-count { color: var(--muted); font-size: 0.85rem; letter-spacing: 0.04em; }
   .lightbox-img { max-width: 100%; max-height: 72vh; border-radius: 12px; object-fit: contain; }
   .lightbox-cap { color: var(--text); font-size: 0.95rem; text-align: center; }
   .lightbox-close {
