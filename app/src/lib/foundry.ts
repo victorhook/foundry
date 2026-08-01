@@ -136,7 +136,11 @@ async function apiPost(url, body) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) { throw new Error("POST " + url + " -> " + r.status); }
+  if (!r.ok) {
+    const err = new Error("POST " + url + " -> " + r.status);
+    err.status = r.status;   // callers that branch on the failure need this
+    throw err;
+  }
   return r.json();
 }
 
@@ -1973,7 +1977,15 @@ async function syncFit(days, silent) {
     state.fitConnected = true;
     if (!silent) { toast("Steps synced"); }
   } catch (e) {
-    if (!silent) { toast("Couldn't sync steps"); }
+    // 409 = the server dropped a dead authorization. Fall back to the Connect
+    // button (and always say so, even on the silent auto-sync) — staying "connected"
+    // with stale numbers just looks broken.
+    if (e && e.status === 409) {
+      state.fitConnected = false;
+      toast("Google Fit needs reconnecting");
+    } else if (!silent) {
+      toast("Couldn't sync steps");
+    }
   } finally {
     state.fitSyncing = false;
     render();

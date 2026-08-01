@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { fetchStepDays, fitConfigured } from '$lib/server/fit';
+import { fetchStepDays, fitConfigured, FitAuthError } from '$lib/server/fit';
 import { isFitConnected, upsertStepDays, getStepDays, clearFitAccount } from '$lib/server/db';
 import type { RequestHandler } from './$types';
 
@@ -30,6 +30,13 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		const rows = await fetchStepDays(days);
 		upsertStepDays(rows);
 	} catch (e) {
+		// A dead refresh token can only be fixed by consenting again. Forget the
+		// account so the UI stops claiming it's connected and offers Connect instead.
+		if (e instanceof FitAuthError) {
+			console.error('[fit] authorization expired, disconnecting:', e.message);
+			clearFitAccount();
+			throw error(409, 'Google Fit needs to be reconnected.');
+		}
 		console.error('[fit] sync failed:', e);
 		throw error(502, 'Could not sync from Google Fit.');
 	}

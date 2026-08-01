@@ -23,6 +23,18 @@ const SCOPE = 'https://www.googleapis.com/auth/fitness.activity.read';
 
 const DAY_MS = 86_400_000;
 
+/** Thrown when the stored refresh token is no longer usable and the only fix is a
+ *  fresh consent. Google returns `invalid_grant` for this — most often because the
+ *  OAuth consent screen sits in "Testing", where refresh tokens die after 7 days,
+ *  but also on an explicit revoke. Callers should drop the account and re-prompt
+ *  rather than surface it as a generic sync failure. */
+export class FitAuthError extends Error {
+	constructor(detail: string) {
+		super(`Google Fit authorization is no longer valid: ${detail}`);
+		this.name = 'FitAuthError';
+	}
+}
+
 export function fitConfigured(): boolean {
 	return !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
 }
@@ -114,7 +126,13 @@ async function getAccessToken(): Promise<string> {
 		})
 	});
 	if (!res.ok) {
-		throw new Error(`Token refresh failed (${res.status}): ${await res.text()}`);
+		const body = await res.text();
+		// invalid_grant means the refresh token itself is dead — retrying will never
+		// help, so signal that distinctly instead of as a transient sync error.
+		if (res.status === 400 && body.includes('invalid_grant')) {
+			throw new FitAuthError(body.replace(/\s+/g, ' ').trim());
+		}
+		throw new Error(`Token refresh failed (${res.status}): ${body}`);
 	}
 	const data = (await res.json()) as { access_token: string; expires_in: number };
 	saveFitTokens({
