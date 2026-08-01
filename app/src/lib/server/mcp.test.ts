@@ -90,38 +90,67 @@ const sources: McpSources = {
 	foodLog: (day) => foodLogs[day] ?? [],
 	templates: () => [
 		{ id: 't1', name: 'Push day', entries: [{ exerciseId: 'ex-bench', setCount: 3, reps: 5, weight: 80 }] }
-	]
+	],
+	programs: () => programs,
+	programDocument: async (filename) => documents[filename] ?? null
+};
+
+const programs = [
+	{
+		id: 'pr1',
+		title: 'Knee rehab protocol',
+		kind: 'rehab',
+		filename: 'rehab.pdf',
+		mime: 'application/pdf',
+		startDate: '2026-07-01',
+		notes: 'From the physio'
+	},
+	{
+		id: 'pr2',
+		title: 'Stockholm Marathon',
+		kind: 'event',
+		filename: 'plan.png',
+		mime: 'image/png',
+		startDate: '2026-06-01',
+		notes: ''
+	},
+	{ id: 'pr3', title: 'Old block', kind: 'program', filename: null, mime: null, startDate: null, notes: 'no file' }
+];
+
+const documents: Record<string, any> = {
+	'rehab.pdf': { type: 'text', mime: 'application/pdf', pages: 2, text: 'Week 1: leg press 3x12', truncated: false },
+	'plan.png': { type: 'image', mime: 'image/png', base64: 'aGVsbG8=', bytes: 5 }
 };
 
 /** Call a tool the way a client would, and hand back the parsed result. */
-function call(name: string, args: Record<string, any> = {}) {
-	const res = handleRpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, sources);
+async function call(name: string, args: Record<string, any> = {}) {
+	const res = await handleRpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, sources);
 	return (res as any).result as { structuredContent?: any; isError?: boolean; content: Array<{ text: string }> };
 }
 
 describe('protocol handshake', () => {
-	it('answers a legacy initialize with the version the client asked for', () => {
-		const res = handleRpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }, sources);
+	it('answers a legacy initialize with the version the client asked for', async () => {
+		const res = await handleRpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }, sources);
 		expect((res as any).result.protocolVersion).toBe('2025-06-18');
 		expect((res as any).result.capabilities.tools).toBeDefined();
 		expect((res as any).result.serverInfo.name).toBe('foundry');
 	});
 
-	it('names a version it does support when the client asks for an unknown one', () => {
-		const res = handleRpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '1999-01-01' } }, sources);
+	it('names a version it does support when the client asks for an unknown one', async () => {
+		const res = await handleRpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '1999-01-01' } }, sources);
 		expect(SUPPORTED_VERSIONS).toContain((res as any).result.protocolVersion);
 	});
 
-	it('answers server/discover for modern clients', () => {
-		const res = handleRpc({ jsonrpc: '2.0', id: 'd1', method: 'server/discover', params: {} }, sources);
+	it('answers server/discover for modern clients', async () => {
+		const res = await handleRpc({ jsonrpc: '2.0', id: 'd1', method: 'server/discover', params: {} }, sources);
 		const r = (res as any).result;
 		expect(r.supportedVersions).toEqual(SUPPORTED_VERSIONS);
 		expect(r.resultType).toBe('complete');
 		expect(r._meta['io.modelcontextprotocol/serverInfo'].name).toBe('foundry');
 	});
 
-	it('rejects a per-request protocol version it does not speak', () => {
-		const res = handleRpc(
+	it('rejects a per-request protocol version it does not speak', async () => {
+		const res = await handleRpc(
 			{
 				jsonrpc: '2.0',
 				id: 1,
@@ -134,8 +163,8 @@ describe('protocol handshake', () => {
 		expect((res as any).error.data.supported).toEqual(SUPPORTED_VERSIONS);
 	});
 
-	it('accepts a per-request protocol version it does speak', () => {
-		const res = handleRpc(
+	it('accepts a per-request protocol version it does speak', async () => {
+		const res = await handleRpc(
 			{
 				jsonrpc: '2.0',
 				id: 1,
@@ -147,17 +176,17 @@ describe('protocol handshake', () => {
 		expect((res as any).result.tools.length).toBe(TOOLS.length);
 	});
 
-	it('says nothing back to a notification', () => {
-		expect(handleRpc({ jsonrpc: '2.0', method: 'notifications/initialized' }, sources)).toBeNull();
+	it('says nothing back to a notification', async () => {
+		expect(await handleRpc({ jsonrpc: '2.0', method: 'notifications/initialized' }, sources)).toBeNull();
 	});
 
-	it('rejects an unknown method', () => {
-		const res = handleRpc({ jsonrpc: '2.0', id: 9, method: 'resources/list' }, sources);
+	it('rejects an unknown method', async () => {
+		const res = await handleRpc({ jsonrpc: '2.0', id: 9, method: 'resources/list' }, sources);
 		expect((res as any).error.code).toBe(RPC_ERRORS.METHOD_NOT_FOUND);
 	});
 
-	it('handles a batch, dropping the notifications', () => {
-		const res = handleMessage(
+	it('handles a batch, dropping the notifications', async () => {
+		const res = await handleMessage(
 			[
 				{ jsonrpc: '2.0', method: 'notifications/initialized' },
 				{ jsonrpc: '2.0', id: 1, method: 'ping' }
@@ -171,8 +200,8 @@ describe('protocol handshake', () => {
 });
 
 describe('tools/list', () => {
-	it('advertises every tool as read-only with a schema', () => {
-		const res = handleRpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, sources);
+	it('advertises every tool as read-only with a schema', async () => {
+		const res = await handleRpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, sources);
 		const tools = (res as any).result.tools;
 		expect(tools.length).toBeGreaterThan(0);
 		for (const t of tools) {
@@ -182,16 +211,16 @@ describe('tools/list', () => {
 		}
 	});
 
-	it('reports an unknown tool as a tool error, not a transport error', () => {
-		const r = call('drop_everything');
+	it('reports an unknown tool as a tool error, not a transport error', async () => {
+		const r = await call('drop_everything');
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain('Unknown tool');
 	});
 });
 
 describe('get_overview', () => {
-	it('summarises what data exists', () => {
-		const d = call('get_overview').structuredContent;
+	it('summarises what data exists', async () => {
+		const d = (await call('get_overview')).structuredContent;
 		expect(d.today).toBe('2026-07-15');
 		expect(d.workouts.total).toBe(3);
 		expect(d.workouts.firstDay).toBe('2026-07-01');
@@ -200,74 +229,75 @@ describe('get_overview', () => {
 		expect(d.workouts.last28Days).toBe(3);
 		expect(d.bodyWeight.latest).toEqual({ day: '2026-07-15', weight: 81.2 });
 		expect(d.macroTargets.kcal).toBe(2400);
+		expect(d.programCount).toBe(3);
 	});
 });
 
 describe('list_workouts', () => {
-	it('returns sessions newest first with totals', () => {
-		const d = call('list_workouts').structuredContent;
+	it('returns sessions newest first with totals', async () => {
+		const d = (await call('list_workouts')).structuredContent;
 		expect(d.workouts.map((w: any) => w.id)).toEqual(['w3', 'w2', 'w1']);
 		expect(d.workouts[2].volumeKg).toBe(800); // 5x80 twice
 		expect(d.workouts[0].distanceKm).toBe(5.2);
 	});
 
-	it('filters by date range', () => {
-		const d = call('list_workouts', { from: '2026-07-05', to: '2026-07-10' }).structuredContent;
+	it('filters by date range', async () => {
+		const d = (await call('list_workouts', { from: '2026-07-05', to: '2026-07-10' })).structuredContent;
 		expect(d.workouts.map((w: any) => w.id)).toEqual(['w2']);
 		expect(d.totalMatched).toBe(1);
 	});
 
-	it('filters by exercise name', () => {
-		const d = call('list_workouts', { exercise: 'squat' }).structuredContent;
+	it('filters by exercise name', async () => {
+		const d = (await call('list_workouts', { exercise: 'squat' })).structuredContent;
 		expect(d.workouts.map((w: any) => w.id)).toEqual(['w2']);
 	});
 
-	it('honours limit and still reports the full match count', () => {
-		const d = call('list_workouts', { limit: 1 }).structuredContent;
+	it('honours limit and still reports the full match count', async () => {
+		const d = (await call('list_workouts', { limit: 1 })).structuredContent;
 		expect(d.workouts).toHaveLength(1);
 		expect(d.totalMatched).toBe(3);
 		expect(d.returned).toBe(1);
 	});
 
-	it('rejects a malformed date', () => {
-		const r = call('list_workouts', { from: '01/07/2026' });
+	it('rejects a malformed date', async () => {
+		const r = await call('list_workouts', { from: '01/07/2026' });
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain('YYYY-MM-DD');
 	});
 });
 
 describe('get_workout', () => {
-	it('returns one session set by set with names resolved', () => {
-		const d = call('get_workout', { id: 'w2' }).structuredContent;
+	it('returns one session set by set with names resolved', async () => {
+		const d = (await call('get_workout', { id: 'w2' })).structuredContent;
 		expect(d.workout.exercises.map((e: any) => e.name)).toEqual(['Bench Press', 'Squat']);
 		expect(d.workout.exercises[0].sets).toHaveLength(2);
 		expect(d.workout.pains).toEqual([{ cat: 'shoulder', level: 2 }]);
 	});
 
-	it('explains an unknown id instead of returning nothing', () => {
-		const r = call('get_workout', { id: 'nope' });
+	it('explains an unknown id instead of returning nothing', async () => {
+		const r = await call('get_workout', { id: 'nope' });
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain('list_workouts');
 	});
 });
 
 describe('search_exercises', () => {
-	it('includes usage stats', () => {
-		const d = call('search_exercises', { query: 'bench' }).structuredContent;
+	it('includes usage stats', async () => {
+		const d = (await call('search_exercises', { query: 'bench' })).structuredContent;
 		const bench = d.exercises.find((e: any) => e.name === 'Bench Press');
 		expect(bench.timesPerformed).toBe(2);
 		expect(bench.lastPerformed).toBe('2026-07-08');
 	});
 
-	it('filters by muscle group', () => {
-		const d = call('search_exercises', { muscle: 'chest' }).structuredContent;
+	it('filters by muscle group', async () => {
+		const d = (await call('search_exercises', { muscle: 'chest' })).structuredContent;
 		expect(d.exercises.map((e: any) => e.name)).toEqual(['Bench Press', 'Dumbbell Bench Press']);
 	});
 });
 
 describe('get_exercise_history', () => {
-	it('tracks one lift across sessions and reports the best set', () => {
-		const d = call('get_exercise_history', { exercise: 'Bench Press' }).structuredContent;
+	it('tracks one lift across sessions and reports the best set', async () => {
+		const d = (await call('get_exercise_history', { exercise: 'Bench Press' })).structuredContent;
 		expect(d.totalSessions).toBe(2);
 		expect(d.sessions[0].day).toBe('2026-07-08');
 		expect(d.heaviestSet).toEqual({
@@ -280,43 +310,43 @@ describe('get_exercise_history', () => {
 		expect(d.bestVolumeKg).toEqual({ day: '2026-07-08', volumeKg: 850 });
 	});
 
-	it('asks for a narrower name when the match is ambiguous', () => {
-		const r = call('get_exercise_history', { exercise: 'bench' });
+	it('asks for a narrower name when the match is ambiguous', async () => {
+		const r = await call('get_exercise_history', { exercise: 'bench' });
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain('matches 2 exercises');
 	});
 
-	it('resolves by id', () => {
-		const d = call('get_exercise_history', { exercise: 'ex-squat' }).structuredContent;
+	it('resolves by id', async () => {
+		const d = (await call('get_exercise_history', { exercise: 'ex-squat' })).structuredContent;
 		expect(d.exercise.name).toBe('Squat');
 		expect(d.totalSessions).toBe(1);
 	});
 
-	it('reports an unknown exercise', () => {
-		const r = call('get_exercise_history', { exercise: 'zercher carry' });
+	it('reports an unknown exercise', async () => {
+		const r = await call('get_exercise_history', { exercise: 'zercher carry' });
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain('No exercise matching');
 	});
 });
 
 describe('get_pain', () => {
-	it('merges standalone, session and per-exercise pain, newest first', () => {
-		const d = call('get_pain').structuredContent;
+	it('merges standalone, session and per-exercise pain, newest first', async () => {
+		const d = (await call('get_pain')).structuredContent;
 		expect(d.entries.map((e: any) => e.source)).toEqual(['pain_note', 'workout', 'exercise']);
 		expect(d.entries[0].items).toEqual([{ cat: 'lower back', level: 4 }]);
 		expect(d.entries[2].exercise).toBe('Squat');
 	});
 
-	it('filters by category', () => {
-		const d = call('get_pain', { category: 'knee' }).structuredContent;
+	it('filters by category', async () => {
+		const d = (await call('get_pain', { category: 'knee' })).structuredContent;
 		expect(d.totalMatched).toBe(1);
 		expect(d.entries[0].source).toBe('exercise');
 	});
 });
 
 describe('get_nutrition', () => {
-	it('totals each logged day and skips empty ones', () => {
-		const d = call('get_nutrition', { from: '2026-07-13', to: '2026-07-15' }).structuredContent;
+	it('totals each logged day and skips empty ones', async () => {
+		const d = (await call('get_nutrition', { from: '2026-07-13', to: '2026-07-15' })).structuredContent;
 		expect(d.days.map((x: any) => x.day)).toEqual(['2026-07-14', '2026-07-15']);
 		expect(d.days[0].kcal).toBe(710);
 		expect(d.days[0].protein).toBe(75);
@@ -325,57 +355,112 @@ describe('get_nutrition', () => {
 		expect(d.targets.kcal).toBe(2400);
 	});
 
-	it('omits individual entries unless asked', () => {
-		expect(call('get_nutrition', { from: '2026-07-14', to: '2026-07-14' }).structuredContent.days[0].entries).toBeUndefined();
-		const detailed = call('get_nutrition', { from: '2026-07-14', to: '2026-07-14', detail: true }).structuredContent;
+	it('omits individual entries unless asked', async () => {
+		expect((await call('get_nutrition', { from: '2026-07-14', to: '2026-07-14' })).structuredContent.days[0].entries).toBeUndefined();
+		const detailed = (await call('get_nutrition', { from: '2026-07-14', to: '2026-07-14', detail: true })).structuredContent;
 		expect(detailed.days[0].entries).toHaveLength(2);
 	});
 
-	it('defaults to the fortnight ending today', () => {
-		const d = call('get_nutrition').structuredContent;
+	it('defaults to the fortnight ending today', async () => {
+		const d = (await call('get_nutrition')).structuredContent;
 		expect(d.to).toBe('2026-07-15');
 		expect(d.from).toBe('2026-07-02');
 	});
 
-	it('refuses a range that would swamp the context window', () => {
-		const r = call('get_nutrition', { from: '2020-01-01', to: '2026-07-15' });
+	it('refuses a range that would swamp the context window', async () => {
+		const r = await call('get_nutrition', { from: '2020-01-01', to: '2026-07-15' });
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain('maximum per call');
 	});
 
-	it('rejects a backwards range', () => {
-		const r = call('get_nutrition', { from: '2026-07-15', to: '2026-07-01' });
+	it('rejects a backwards range', async () => {
+		const r = await call('get_nutrition', { from: '2026-07-15', to: '2026-07-01' });
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain('is after');
 	});
 });
 
 describe('get_body_weight, get_steps, get_notes, get_goals, list_templates', () => {
-	it('reports weight change across the range', () => {
-		const d = call('get_body_weight').structuredContent;
+	it('reports weight change across the range', async () => {
+		const d = (await call('get_body_weight')).structuredContent;
 		expect(d.count).toBe(2);
 		expect(d.changeKg).toBe(-1.3);
 	});
 
-	it('averages steps over the days recorded', () => {
-		const d = call('get_steps', { from: '2026-07-13', to: '2026-07-15' }).structuredContent;
+	it('averages steps over the days recorded', async () => {
+		const d = (await call('get_steps', { from: '2026-07-13', to: '2026-07-15' })).structuredContent;
 		expect(d.total).toBe(30000);
 		expect(d.dailyAverage).toBe(10000);
 	});
 
-	it('searches note text', () => {
-		const d = call('get_notes', { query: 'deload' }).structuredContent;
+	it('searches note text', async () => {
+		const d = (await call('get_notes', { query: 'deload' })).structuredContent;
 		expect(d.notes).toHaveLength(1);
 		expect(d.notes[0].day).toBe('2026-07-12');
 	});
 
-	it('can hide completed goals', () => {
-		expect(call('get_goals').structuredContent.count).toBe(2);
-		expect(call('get_goals', { includeDone: false }).structuredContent.count).toBe(1);
+	it('can hide completed goals', async () => {
+		expect((await call('get_goals')).structuredContent.count).toBe(2);
+		expect((await call('get_goals', { includeDone: false })).structuredContent.count).toBe(1);
 	});
 
-	it('resolves exercise names in templates', () => {
-		const d = call('list_templates').structuredContent;
+	it('resolves exercise names in templates', async () => {
+		const d = (await call('list_templates')).structuredContent;
 		expect(d.templates[0].entries[0].exercise).toBe('Bench Press');
+	});
+});
+
+describe('programs', () => {
+	it('lists them with what kind of document is attached', async () => {
+		const d = (await call('list_programs')).structuredContent;
+		expect(d.count).toBe(3);
+		expect(d.programs[0].document).toEqual({ attached: true, type: 'pdf', mime: 'application/pdf' });
+		expect(d.programs[1].document.type).toBe('image');
+		expect(d.programs[2].document.attached).toBe(false);
+	});
+
+	it('filters by kind and by text', async () => {
+		expect((await call('list_programs', { kind: 'rehab' })).structuredContent.count).toBe(1);
+		expect((await call('list_programs', { query: 'physio' })).structuredContent.programs[0].id).toBe('pr1');
+	});
+
+	it('rejects an unknown kind', async () => {
+		const r = await call('list_programs', { kind: 'diet' });
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).toContain('program, rehab, event');
+	});
+
+	it('reads a PDF out as text', async () => {
+		const r = await call('get_program', { id: 'pr1' });
+		expect(r.structuredContent.program.title).toBe('Knee rehab protocol');
+		expect(r.structuredContent.document).toMatchObject({ type: 'text', pages: 2, truncated: false });
+		expect(r.structuredContent.document.text).toContain('leg press');
+	});
+
+	it('returns an image as an image block, not as base64 in the JSON', async () => {
+		const r = await call('get_program', { id: 'pr2' });
+		expect(r.content).toHaveLength(2);
+		expect(r.content[1]).toEqual({ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' });
+		expect(JSON.stringify(r.structuredContent)).not.toContain('aGVsbG8=');
+		expect(r.structuredContent.document.bytes).toBe(5);
+	});
+
+	it('skips the document on request, and when there is none', async () => {
+		expect((await call('get_program', { id: 'pr1', document: false })).structuredContent.document).toBeUndefined();
+		expect((await call('get_program', { id: 'pr3' })).structuredContent.document).toBeUndefined();
+	});
+
+	it('explains an unknown id', async () => {
+		const r = await call('get_program', { id: 'nope' });
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).toContain('list_programs');
+	});
+
+	it('says so when the server cannot read documents at all', async () => {
+		const res = await handleRpc(
+			{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_program', arguments: { id: 'pr1' } } },
+			{ ...sources, programDocument: undefined }
+		);
+		expect((res as any).result.structuredContent.document.type).toBe('unavailable');
 	});
 });

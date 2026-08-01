@@ -302,3 +302,49 @@ test('an exercise logs which version was used, and a goal tracks that version', 
 	await expect(page.locator('.goal-card', { hasText: 'Press DB' }).locator('.goal-count'))
 		.toHaveText('20/40 kg');
 });
+
+// The Exercises register: the whole library outside a workout — create, search
+// and edit without having to start a session first.
+test('the exercise register creates, filters and edits exercises', async ({ page }) => {
+	await login(page);
+	await menuNav(page, 'Exercises');
+
+	// Create straight from the register (no workout in progress).
+	await page.getByRole('button', { name: /New exercise/ }).click();
+	await page.getByPlaceholder('Name').fill('Pendlay Row');
+	await page.getByRole('button', { name: 'Core', exact: true }).click();
+	await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
+	await expect(page.locator('.ex-pick', { hasText: 'Pendlay Row' })).toBeVisible();
+	await expect(page.locator('.ex-pick', { hasText: 'Pendlay Row' })).toContainText('Never done');
+
+	// A second one, so the tag filter has something to exclude.
+	await page.getByRole('button', { name: /New exercise/ }).click();
+	await page.getByPlaceholder('Name').fill('Calf Raise');
+	await page.getByRole('button', { name: 'Legs', exact: true }).click();
+	await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
+
+	// Search narrows to the one match…
+	await page.locator('#reg-q').fill('pendlay');
+	await expect(page.locator('.ex-pick')).toHaveCount(1);
+	await expect(page.locator('.ex-pick').first()).toContainText('Pendlay Row');
+
+	// …and so does the tag filter (other specs in this file share the DB, so
+	// assert on membership rather than exact counts).
+	await page.locator('#reg-q').fill('');
+	await page.locator('.cat-row').getByRole('button', { name: 'Core', exact: true }).click();
+	await expect(page.locator('.ex-pick', { hasText: 'Pendlay Row' })).toBeVisible();
+	await page.locator('.cat-row').getByRole('button', { name: 'Legs', exact: true }).click();
+	await expect(page.locator('.ex-pick', { hasText: 'Pendlay Row' })).toHaveCount(0);
+	await page.locator('.cat-row').getByRole('button', { name: 'All', exact: true }).click();
+
+	// Tapping a row edits it; saving pops back to the register with the new name.
+	await page.locator('.ex-pick', { hasText: 'Pendlay Row' }).click();
+	await expect(page.getByPlaceholder('Name')).toHaveValue('Pendlay Row');
+	await page.getByPlaceholder('Name').fill('Pendlay Row (barbell)');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.locator('.ex-pick', { hasText: 'Pendlay Row (barbell)' })).toBeVisible();
+
+	// It really persisted, and a reload lands back on the register (not home).
+	await page.reload();
+	await expect(page.locator('.ex-pick', { hasText: 'Pendlay Row (barbell)' })).toBeVisible();
+});

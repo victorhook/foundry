@@ -35,6 +35,13 @@ mode 444) and the system prompt tells the agent it's there.
 It contains workouts with their sets, exercises, body weights, steps, notes,
 goals, profile targets, and the last 60 days of the food diary.
 
+Uploaded **programs** (rehab protocols, coaching blocks, race plans) are listed
+with their metadata and the path of the attached PDF or image — the file itself
+stays on disk and the agent opens it only when a question is actually about the
+plan, rather than inflating every turn's export with it. Reads under the upload
+directory are pre-approved in the permission settings; nothing else outside the
+workspace is.
+
 **The derived work is done server-side, on purpose.** The first version handed
 over raw rows and a turn cost ~21 shell commands: converting epoch timestamps
 with `date -d`, joining exerciseIds to names, and shelling out to python to sum

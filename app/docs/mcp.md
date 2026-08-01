@@ -1,7 +1,7 @@
 # MCP server (ChatGPT, Claude, editors)
 
 Foundry speaks the [Model Context Protocol](https://modelcontextprotocol.io) at
-`POST /mcp`. Point an MCP client at it and the assistant gets **twelve read-only
+`POST /mcp`. Point an MCP client at it and the assistant gets **fourteen read-only
 tools** over your training data instead of one big JSON blob — it can ask for
 "bench press history since April" rather than downloading everything and
 filtering.
@@ -100,16 +100,37 @@ For the Claude desktop/web app, add it as a custom connector with the same URL.
 | `get_notes` | Day notes, searchable by text. |
 | `get_goals` | Training goals and whether they're done. |
 | `list_templates` | Saved workout templates and their planned sets. |
+| `list_programs` | Uploaded training programs, rehab plans and events — title, kind, start date, your notes, and whether a document is attached. |
+| `get_program` | One of those documents, read out: a PDF as text, an image as a picture the model can look at. |
 
 Dates are `YYYY-MM-DD` in the timezone set by `TZ`, and `from`/`to` filters are
 inclusive. List tools cap at 50 results by default (500 max) and always report
 `totalMatched`, so the assistant can tell when it's seeing a slice.
+
+### Program documents
+
+A program is a file you uploaded — a PDF from a physio, a photo of a coach's
+plan — so `get_program` has to turn one into something a model can read:
+
+- **PDF** → its text layer, extracted server-side with pdf.js, page by page and
+  capped at 40 000 characters. A **scanned** PDF has no text layer and nothing
+  on the server rasterises pages, so the tool says so plainly rather than
+  reporting an empty program.
+- **JPEG / PNG / WebP / GIF** → an MCP `image` content block, i.e. the picture
+  itself. The base64 is deliberately *not* in `structuredContent`, so it isn't
+  sent twice.
+- Anything else, or a file missing from disk, comes back as
+  `document.type: "unavailable"` with the reason.
 
 ## How it's built
 
 - `src/lib/server/mcp.ts` — tool definitions and the JSON-RPC layer. Pure: the
   database getters are injected, so it's unit-tested without opening SQLite
   (`src/lib/server/mcp.test.ts`).
+- `src/lib/server/documents.ts` — the one thing a tool reads off the filesystem:
+  an uploaded program document, turned into text (pdf.js) or base64 (images).
+  It never throws — an unreadable file is a fact the model is told, not a failed
+  tool call.
 - `src/routes/mcp/+server.ts` — HTTP transport; wires in `$lib/server/db`.
 - `src/hooks.server.ts` — allows the bearer token on `POST /mcp` specifically.
 
@@ -131,7 +152,7 @@ Notes on the implementation:
 
 | | MCP connector | [GPT Action](api.md) |
 | --- | --- | --- |
-| Granularity | 12 focused tools | one `GET /api/data` dump |
+| Granularity | 14 focused tools | one `GET /api/data` dump |
 | Works with | ChatGPT, Claude, editors, any MCP client | ChatGPT custom GPTs only |
 | Setup | developer mode + connector | build a custom GPT |
 

@@ -10,8 +10,10 @@ import {
 	getBodyWeights,
 	getStepDays,
 	getFoodLog,
-	getTemplates
+	getTemplates,
+	getPrograms
 } from '$lib/server/db';
+import { readProgramDocument } from '$lib/server/documents';
 import { handleMessage, RPC_ERRORS, SUPPORTED_VERSIONS, type McpSources } from '$lib/server/mcp';
 import type { RequestHandler } from './$types';
 
@@ -37,7 +39,11 @@ function sources(): McpSources {
 		bodyWeights: getBodyWeights,
 		steps: getStepDays,
 		foodLog: getFoodLog,
-		templates: getTemplates
+		templates: getTemplates,
+		programs: getPrograms,
+		// The only tool that touches the filesystem: program documents live as
+		// uploads next to the database, not in it.
+		programDocument: readProgramDocument
 	};
 }
 
@@ -55,7 +61,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		return json({ jsonrpc: '2.0', id: null, error: { code: RPC_ERRORS.PARSE_ERROR, message: 'Parse error' } });
 	}
 
-	const response = handleMessage(body, sources());
+	const response = await handleMessage(body, sources());
 	// Notifications get no body; 202 is what the transport spec asks for.
 	if (response === null) {
 		return new Response(null, { status: 202 });

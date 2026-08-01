@@ -52,8 +52,8 @@ const BIN = findBin({ explicit: env.CLAUDE_BIN, pathEnv: process.env.PATH, home:
 
 /**
  * Foundry's own MCP server, if it's switched on. When it is, the agent gets
- * twelve typed read-only tools (`list_workouts`, `get_exercise_history`, …) and
- * never has to shell out to read data at all — no jq, no python, no snapshot
+ * fourteen typed read-only tools (`list_workouts`, `get_exercise_history`, …)
+ * and never has to shell out to read data at all — no jq, no python, no snapshot
  * file, and no permission prompt to dead-end on.
  *
  * The config goes in a file rather than on the command line so the token isn't
@@ -190,7 +190,12 @@ const ALLOW = [
 	'Bash(echo:*)',
 	// Foundry's own read-only tools. Without this they'd need approval too — the
 	// same dead end Bash hit.
-	'mcp__foundry'
+	'mcp__foundry',
+	// Uploaded program documents. They live outside the workspace, so reading one
+	// would otherwise stop for approval nobody is there to give. Only in the file
+	// posture — the MCP one has no Read tool at all and gets the same documents
+	// through `get_program`.
+	`Read(${path.resolve(env.UPLOAD_DIR || 'data/uploads')}/**)`
 ];
 
 function denyRules(): string[] {
@@ -259,10 +264,17 @@ function systemPrompt(snapshot: string | null, mcp: boolean): string {
 			'You have direct read-only tools onto the owner\'s Foundry database, named',
 			'`get_overview`, `list_workouts`, `get_workout`, `search_exercises`,',
 			'`get_exercise_history`, `get_pain`, `get_nutrition`, `get_body_weight`,',
-			'`get_steps`, `get_notes`, `get_goals` and `list_templates`. Use them for',
-			'anything about their training, food, weight, pain or progress — they query',
-			'live data and take the arguments you need (date ranges, exercise names).',
+			'`get_steps`, `get_notes`, `get_goals`, `list_templates`, `list_programs`',
+			'and `get_program`. Use them for anything about their training, food,',
+			'weight, pain or progress — they query live data and take the arguments you',
+			'need (date ranges, exercise names).',
 			'`get_overview` first if you are unsure what exists or over what period.',
+			'',
+			'`list_programs` and `get_program` cover the plans they have uploaded — a',
+			'physio\'s rehab protocol, a coach\'s block, a race plan. `get_program`',
+			'returns a PDF as text and an image as a picture you can look at, so you can',
+			'answer "what does my program say for today" and compare it against what',
+			'they actually logged.',
 			'',
 			'Do NOT go looking for a database file, an API, or an export on disk, and do',
 			'not shell out to read data — the tools are the supported path and the',
@@ -284,7 +296,11 @@ function systemPrompt(snapshot: string | null, mcp: boolean): string {
 			'',
 			toolingLine(),
 			'The file holds the owner\'s entire history and can run to hundreds of KB, so',
-			'select the slice you need instead of reading it whole.'
+			'select the slice you need instead of reading it whole.',
+			'',
+			'Its `programs` array is the plans they have uploaded (rehab protocols,',
+			'coaching blocks, race plans). Each has a `file` path to the PDF or image —',
+			'read that file directly when a question is about what a plan prescribes.'
 		);
 	} else {
 		lines.push(

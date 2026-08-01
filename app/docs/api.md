@@ -71,7 +71,7 @@ curl -s -H "Authorization: Bearer $API_TOKEN" https://<your-host>/api/data \
 
 Two options, both using the same `API_TOKEN`:
 
-- **[MCP connector](mcp.md)** — twelve focused read-only tools at `POST /mcp`,
+- **[MCP connector](mcp.md)** — fourteen focused read-only tools at `POST /mcp`,
   so the assistant fetches just what a question needs. Also works with Claude
   and editors. Usually the better choice.
 - **Custom GPT Action** (below) — one `GET /api/data` dump, ChatGPT only.

@@ -18,6 +18,7 @@ import {
 	getPrograms
 } from './db';
 import { buildSnapshot, localDay, recentDays, NUTRITION_DAYS, SNAPSHOT_FILE } from './snapshot';
+import { uploadPath } from './uploads';
 import { tooling } from './claude';
 
 // The AI chat agent has no database connection and no API credentials — by
@@ -54,6 +55,19 @@ export function writeSnapshot(workspace: string, tz?: string): string | null {
 			notes: getNotes(),
 			painNotes: getPainNotes(),
 			goals: getGoals(),
+			// Only the metadata goes in the file; the plan itself stays where it is
+			// and the agent opens it by path — a PDF or a photo of a physio sheet is
+			// something it can read directly, and inlining either would bloat every
+			// turn's export for a question that rarely comes up.
+			programs: getPrograms().map((p) => ({
+				id: p.id,
+				title: p.title,
+				kind: p.kind,
+				startDate: p.startDate,
+				notes: p.notes,
+				mime: p.mime,
+				file: p.filename ? path.resolve(uploadPath(p.filename)) : null
+			})),
 			profile: getProfile(),
 			foodLog,
 			// Recipes are emitted for what this box actually has — jq is absent on

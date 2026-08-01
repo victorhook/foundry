@@ -140,6 +140,11 @@ type SnapshotSources = {
 	/** Standalone pain notes: [{ at, note, items:[{cat,level}] }], any order. */
 	painNotes?: any[];
 	goals: unknown[];
+	/**
+	 * Uploaded training programs / rehab plans / events, each with `file`: the
+	 * absolute path of the attached PDF or image, which the agent can open itself.
+	 */
+	programs?: any[];
 	profile: any;
 	/** Food-diary entries per day, keyed YYYY-MM-DD. Empty days are dropped. */
 	foodLog: Record<string, unknown[]>;
@@ -296,6 +301,11 @@ export function buildSnapshot(s: SnapshotSources) {
 			'nutrition.days[].entries[]: { slot, name, grams, qty, kcal, protein, carbs,',
 			`fat } — totals per entry, not per 100 g. Last ${NUTRITION_DAYS} days only.`,
 			'',
+			'programs[] are training plans, rehab protocols and events the owner',
+			'uploaded: { id, title, kind, startDate, notes, mime, file }. `file` is the',
+			'absolute path of the attached PDF or image — open it directly when a',
+			'question is about what a plan prescribes. It is the owner\'s own document.',
+			'',
 			'Absent data means not recorded, not zero. No photos or identifiers beyond',
 			'what is listed here.'
 		].join('\n'),
@@ -314,6 +324,7 @@ export function buildSnapshot(s: SnapshotSources) {
 		notes: s.notes,
 		painNotes,
 		goals: s.goals,
+		programs: s.programs ?? [],
 		nutrition: { targets: s.profile?.targets ?? null, days: nutritionDays },
 		counts
 	};

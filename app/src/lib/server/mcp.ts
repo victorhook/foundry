@@ -8,6 +8,7 @@
 // supplies the real ones from ./db.
 
 import { enrichWorkout, localDay } from './snapshot';
+import type { ProgramDocument } from './documents';
 
 export const SERVER_NAME = 'foundry';
 export const SERVER_VERSION = '1.0.0';
@@ -35,7 +36,8 @@ const UNSUPPORTED_PROTOCOL_VERSION = -32022;
 
 const INSTRUCTIONS = `Foundry is a single person's workout tracker: gym sessions (exercises, sets,
 reps, weight), cardio, how each session felt (effort/energy), body pain logs,
-body weight, daily step counts, food diary, notes and goals.
+body weight, daily step counts, food diary, notes and goals — plus the training
+programs, rehab plans and event documents they've uploaded.
 
 Start with get_overview to learn what data exists and over what date range,
 then reach for the specific tool. Dates are YYYY-MM-DD in the owner's local
@@ -56,14 +58,39 @@ export type McpSources = {
 	steps: () => Array<{ day: string; steps: number }>;
 	foodLog: (day: string) => any[];
 	templates: () => any[];
+	programs: () => any[];
+	/**
+	 * The document attached to a program, turned into text or an image. Optional:
+	 * without it the program tools still report the metadata and say the file
+	 * itself is unreadable, which is what the unit tests exercise.
+	 */
+	programDocument?: (filename: string, mime: string | null) => Promise<ProgramDocument | null>;
 };
+
+/** An MCP content block a tool wants returned alongside its JSON. */
+type ContentBlock = Record<string, unknown>;
+
+/**
+ * What a tool returns when JSON isn't the whole answer — `get_program` hands
+ * back an image block so the model can actually look at a photographed plan.
+ * `data` still goes out as the structured result; `content` rides alongside it,
+ * and stays out of the JSON so a megabyte of base64 isn't sent twice.
+ */
+export class ToolOutput {
+	constructor(
+		readonly data: Record<string, unknown>,
+		readonly content: ContentBlock[]
+	) {}
+}
+
+type ToolResult = Record<string, unknown> | ToolOutput;
 
 type Tool = {
 	name: string;
 	title: string;
 	description: string;
 	inputSchema: Record<string, unknown>;
-	run: (args: Record<string, any>, s: McpSources) => Record<string, unknown>;
+	run: (args: Record<string, any>, s: McpSources) => ToolResult | Promise<ToolResult>;
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -144,7 +171,7 @@ const getOverview: Tool = {
 	name: 'get_overview',
 	title: 'Overview',
 	description:
-		'What data exists and over what period: workout counts and date range, recent activity, latest body weight, step and nutrition coverage, and the owner\'s profile and macro targets. Call this first — it tells you which other tools are worth calling.',
+		'What data exists and over what period: workout counts and date range, recent activity, latest body weight, step and nutrition coverage, how many programs are on file, and the owner\'s profile and macro targets. Call this first — it tells you which other tools are worth calling.',
 	inputSchema: { type: 'object', properties: {}, additionalProperties: false },
 	run: (_args, s) => {
 		const now = today(s);
@@ -187,6 +214,9 @@ const getOverview: Tool = {
 			painNoteCount: s.painNotes().length,
 			noteCount: s.notes().length,
 			goalCount: s.goals().length,
+			// Uploaded plans are easy to forget exist — a count here is what makes the
+			// model reach for list_programs instead of assuming there's no program.
+			programCount: s.programs().length,
 			profile: { dob: profile?.dob ?? null, height: profile?.height ?? null, gender: profile?.gender ?? null },
 			macroTargets: profile?.targets ?? null
 		};
@@ -668,6 +698,120 @@ const listTemplates: Tool = {
 	}
 };
 
+/** The kinds a program row can have, as the app's own editor writes them. */
+const PROGRAM_KINDS = ['program', 'rehab', 'event'];
+
+/** How a program's attachment will come back, without reading the file. */
+function documentKind(mime: string | null): 'pdf' | 'image' | 'other' | null {
+	if (!mime) { return null; }
+	if (mime === 'application/pdf') { return 'pdf'; }
+	return mime.startsWith('image/') ? 'image' : 'other';
+}
+
+function programSummary(p: any) {
+	return {
+		id: p.id,
+		title: p.title,
+		kind: p.kind || 'program',
+		startDate: p.startDate ?? null,
+		notes: p.notes || '',
+		document: p.filename
+			? { attached: true, type: documentKind(p.mime ?? null), mime: p.mime ?? null }
+			: { attached: false, type: null, mime: null }
+	};
+}
+
+const listPrograms: Tool = {
+	name: 'list_programs',
+	title: 'Programs, rehab plans and events',
+	description:
+		'Training programs, rehab protocols and events the owner has saved — title, kind, start date, their own notes, and whether a document is attached. Most of these are a PDF or a picture from a coach or physio; call get_program to actually read one.',
+	inputSchema: {
+		type: 'object',
+		properties: {
+			kind: { type: 'string', enum: PROGRAM_KINDS, description: 'Only this kind of entry.' },
+			query: { type: 'string', description: 'Only entries whose title or notes contain this text.' }
+		},
+		additionalProperties: false
+	},
+	run: (args, s) => {
+		const kind = args.kind ? String(args.kind).toLowerCase() : null;
+		if (kind && !PROGRAM_KINDS.includes(kind)) {
+			throw new ToolError(`kind must be one of ${PROGRAM_KINDS.join(', ')}, got "${args.kind}"`);
+		}
+		const query = args.query ? String(args.query).toLowerCase() : null;
+		const programs = s
+			.programs()
+			.map(programSummary)
+			.filter((p) => {
+				if (kind && p.kind !== kind) { return false; }
+				if (query && !`${p.title} ${p.notes}`.toLowerCase().includes(query)) { return false; }
+				return true;
+			});
+		return { count: programs.length, programs };
+	}
+};
+
+const getProgram: Tool = {
+	name: 'get_program',
+	title: 'Read a program document',
+	description:
+		'One program, rehab plan or event with its attached document read out: a PDF comes back as text page by page, an image comes back as a picture you can look at. Use it to answer questions about what a plan actually prescribes, or to compare logged workouts against it. A scanned PDF with no text layer can\'t be read — you\'ll be told so.',
+	inputSchema: {
+		type: 'object',
+		properties: {
+			id: { type: 'string', description: 'Program id, as returned by list_programs.' },
+			document: {
+				type: 'boolean',
+				description: 'Read the attached document (default true). Set false for just the metadata.'
+			}
+		},
+		required: ['id'],
+		additionalProperties: false
+	},
+	run: async (args, s) => {
+		const id = String(args.id ?? '');
+		if (!id) { throw new ToolError('id is required'); }
+		const row = s.programs().find((p: any) => p.id === id);
+		if (!row) { throw new ToolError(`No program with id "${id}". Use list_programs to find valid ids.`); }
+
+		const program = programSummary(row);
+		if (args.document === false || !row.filename) {
+			return { program };
+		}
+		if (!s.programDocument) {
+			return { program, document: { type: 'unavailable', reason: 'Documents cannot be read on this server.' } };
+		}
+
+		const doc = await s.programDocument(String(row.filename), row.mime ?? null);
+		if (!doc) {
+			return { program, document: { type: 'unavailable', reason: 'The attached file could not be read.' } };
+		}
+		if (doc.type === 'text') {
+			return {
+				program,
+				document: {
+					type: 'text',
+					mime: doc.mime,
+					pages: doc.pages,
+					truncated: doc.truncated,
+					text: doc.text
+				}
+			};
+		}
+		if (doc.type === 'image') {
+			// The picture goes back as an image block, not as base64 in the JSON —
+			// that's the difference between the model seeing the plan and being told
+			// a file exists.
+			return new ToolOutput(
+				{ program, document: { type: 'image', mime: doc.mime, bytes: doc.bytes, note: 'The image follows this JSON.' } },
+				[{ type: 'image', data: doc.base64, mimeType: doc.mime }]
+			);
+		}
+		return { program, document: { type: 'unavailable', mime: doc.mime, reason: doc.reason } };
+	}
+};
+
 export const TOOLS: Tool[] = [
 	getOverview,
 	listWorkouts,
@@ -680,7 +824,9 @@ export const TOOLS: Tool[] = [
 	getSteps,
 	getNotes,
 	getGoals,
-	listTemplates
+	listTemplates,
+	listPrograms,
+	getProgram
 ];
 
 /* ----------------------------------------------------------------- protocol */
@@ -711,7 +857,7 @@ const CAPABILITIES = { tools: { listChanged: false } };
 const SERVER_INFO = { name: SERVER_NAME, title: 'Foundry', version: SERVER_VERSION };
 
 /** Run a tool and shape the result the way `tools/call` wants it. */
-function callTool(name: string, args: Record<string, any>, sources: McpSources) {
+async function callTool(name: string, args: Record<string, any>, sources: McpSources) {
 	const tool = TOOLS.find((t) => t.name === name);
 	if (!tool) {
 		return {
@@ -720,10 +866,15 @@ function callTool(name: string, args: Record<string, any>, sources: McpSources) 
 		};
 	}
 	try {
-		const data = tool.run(args ?? {}, sources);
+		const out = await tool.run(args ?? {}, sources);
+		const data = out instanceof ToolOutput ? out.data : out;
+		const extra = out instanceof ToolOutput ? out.content : [];
 		// Both shapes on purpose: `structuredContent` for clients that parse it,
 		// the JSON text block for those that only read content.
-		return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }], structuredContent: data };
+		return {
+			content: [{ type: 'text', text: JSON.stringify(data, null, 2) }, ...extra],
+			structuredContent: data
+		};
 	} catch (e) {
 		// A bad argument or a missing record is the model's problem to fix, so it
 		// comes back as a tool error it can read — not a transport-level failure.
@@ -734,9 +885,10 @@ function callTool(name: string, args: Record<string, any>, sources: McpSources) 
 
 /**
  * Handle one JSON-RPC message. Returns the response, or null for a notification
- * (which by definition gets no reply).
+ * (which by definition gets no reply). Async only because reading a program
+ * document is — everything else answers from memory.
  */
-export function handleRpc(msg: JsonRpcRequest, sources: McpSources): JsonRpcResponse | null {
+export async function handleRpc(msg: JsonRpcRequest, sources: McpSources): Promise<JsonRpcResponse | null> {
 	if (!msg || typeof msg !== 'object' || typeof msg.method !== 'string') {
 		return fail(null, INVALID_REQUEST, 'Invalid JSON-RPC request');
 	}
@@ -799,7 +951,7 @@ export function handleRpc(msg: JsonRpcRequest, sources: McpSources): JsonRpcResp
 		case 'tools/call': {
 			const name = String(params.name ?? '');
 			if (!name) { return fail(id, INVALID_PARAMS, 'tools/call requires a tool name'); }
-			return ok(id, callTool(name, params.arguments ?? {}, sources));
+			return ok(id, await callTool(name, params.arguments ?? {}, sources));
 		}
 
 		default:
@@ -813,12 +965,14 @@ export function handleRpc(msg: JsonRpcRequest, sources: McpSources): JsonRpcResp
  * batching, used by protocol revision 2025-03-26). Returns null when nothing
  * needs a reply, which the transport turns into `202 Accepted`.
  */
-export function handleMessage(body: unknown, sources: McpSources): JsonRpcResponse | JsonRpcResponse[] | null {
+export async function handleMessage(
+	body: unknown,
+	sources: McpSources
+): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
 	if (Array.isArray(body)) {
 		if (body.length === 0) { return fail(null, INVALID_REQUEST, 'Empty batch'); }
-		const responses = body
-			.map((m) => handleRpc(m as JsonRpcRequest, sources))
-			.filter((r): r is JsonRpcResponse => r !== null);
+		const settled = await Promise.all(body.map((m) => handleRpc(m as JsonRpcRequest, sources)));
+		const responses = settled.filter((r): r is JsonRpcResponse => r !== null);
 		return responses.length ? responses : null;
 	}
 	return handleRpc(body as JsonRpcRequest, sources);
