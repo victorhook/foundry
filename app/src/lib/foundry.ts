@@ -1853,13 +1853,17 @@ function registerItemHtml(e) {
     ? `<img class="p-thumb" src="/api/file/${e.image}" loading="lazy" alt="">`
     : `<span class="p-thumb p-thumb-empty">\u{1F3CB}️</span>`;
   const st = exStats(e.id);
-  const used = st.count ? `${st.count}× · last ${fmtDate(st.lastAt)}` : "Never done";
+  // Trained ones get the "cool" highlight; never-done stays muted so the list
+  // doesn't read as all-green.
+  const used = st.count
+    ? `<div class="p-last">${st.count}× · last ${fmtDate(st.lastAt)}</div>`
+    : `<div class="p-muscle">Never done</div>`;
   return `<button class="ex-pick" data-act="reg-edit" data-id="${e.id}">
     ${thumb}
     <div style="flex:1;min-width:0;"><div class="p-name">${escAttr(e.name)}</div>
     <div class="p-muscle">${escAttr((e.muscles || []).join(" · "))}</div>
-    <div class="p-last">${used}</div></div>
-    <span class="p-add">✎</span>
+    ${used}</div>
+    <span class="p-add">›</span>
   </button>`;
 }
 
