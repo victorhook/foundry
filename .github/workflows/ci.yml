@@ -62,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        spec: [workouts, nutrition-media, chat-and-library]
+        spec: [workouts, nutrition-media, chat-and-library, meal-sections]
     steps:
       - uses: actions/checkout@v4
 

@@ -4389,14 +4389,19 @@ function viewChats() {
 // itself (via save_memory); this panel is for transparency + manual edits.
 function memorySection() {
   const mem = (state.agentMemory || "").trim();
+  // Note: no `.empty` element here — the chats screen already has one, and a
+  // second would break a strict `.empty` locator. The hint covers the empty case.
   const preview = mem
     ? `<div class="note-card" data-act="memory-open"><div class="note-text" style="white-space:pre-wrap;">${escAttr(mem.length > 400 ? mem.slice(0, 400) + "…" : mem)}</div></div>`
-    : `<div class="empty">Nothing yet — the assistant will remember durable things (injuries, goals, how you like it to answer) as you chat, and use them in every new conversation.</div>`;
+    : "";
+  const hint = mem
+    ? "Carried into every chat, so a new conversation already knows you. The assistant updates it on its own; edit or clear it here anytime."
+    : "Nothing remembered yet. As you chat, the assistant will note durable things (injuries, goals, how you like it to answer) and use them in every new conversation. Edit or clear it here anytime.";
   return `<div class="section-head" style="margin-top:26px;">
       <span class="eyebrow">🧠 Memory</span>
       <button class="back-btn" data-act="memory-open">Edit ›</button>
     </div>
-    <div class="form-hint">Carried into every chat, so a new conversation already knows you. The assistant updates it on its own; edit or clear it here anytime.</div>
+    <div class="form-hint">${hint}</div>
     ${preview}`;
 }
 
