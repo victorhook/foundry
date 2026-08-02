@@ -2,11 +2,15 @@ import { json, error } from '@sveltejs/kit';
 import fs from 'node:fs';
 import path from 'node:path';
 import { env } from '$env/dynamic/private';
+import { analyzeImage, claudeAvailable } from '$lib/server/claude';
 import type { RequestHandler } from './$types';
 
-// Nutrition-label reading. When ANTHROPIC_API_KEY is set we use Claude vision
-// (fast, far more accurate on real packaging — glare, curved labels, odd fonts).
-// Without a key we fall back to on-device Tesseract OCR so the feature still works.
+// Nutrition-label reading. We use Claude vision — far more accurate on real
+// packaging (glare, curved labels, odd fonts, Swedish/European layouts) than OCR
+// — via the `claude` CLI on the owner's Claude subscription, the same auth the
+// chat uses (see src/lib/server/claude.ts). No API key needed. If the CLI isn't
+// set up (or it errors) we fall back to on-device Tesseract OCR so the feature
+// still works, just less well.
 
 const numFrom = (s: string) => {
 	const n = parseFloat(s.replace(',', '.'));
@@ -14,15 +18,6 @@ const numFrom = (s: string) => {
 };
 
 /* ---------- Claude vision (primary) ---------- */
-
-let anthropic: any = null;
-async function getAnthropic() {
-	if (!anthropic) {
-		const { default: Anthropic } = await import('@anthropic-ai/sdk');
-		anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-	}
-	return anthropic;
-}
 
 const PROMPT =
 	'You are reading a nutrition-facts label, most likely Swedish or otherwise European. ' +
@@ -43,46 +38,8 @@ function parseJsonLoose(s: string) {
 	}
 }
 
-async function callClaude(client: any, buf: Buffer, mediaType: string, fast: boolean) {
-	// No thinking (this is a tiny extraction) and, when available, fast mode —
-	// both to keep latency down.
-	const content = [
-		{
-			type: 'image',
-			source: { type: 'base64', media_type: mediaType, data: buf.toString('base64') }
-		},
-		{ type: 'text', text: PROMPT }
-	];
-	if (fast) {
-		return client.beta.messages.create({
-			model: 'claude-opus-4-8',
-			max_tokens: 400,
-			speed: 'fast',
-			betas: ['fast-mode-2026-02-01'],
-			messages: [{ role: 'user', content }]
-		});
-	}
-	return client.messages.create({
-		model: 'claude-opus-4-8',
-		max_tokens: 400,
-		messages: [{ role: 'user', content }]
-	});
-}
-
-async function scanWithClaude(buf: Buffer, mediaType: string) {
-	const client = await getAnthropic();
-	// Fast mode is a research preview and may not be enabled on every key — if it
-	// errors, retry the same request without it before giving up on Claude.
-	let res;
-	try {
-		res = await callClaude(client, buf, mediaType, true);
-	} catch {
-		res = await callClaude(client, buf, mediaType, false);
-	}
-	const text = (res.content || [])
-		.filter((b: any) => b.type === 'text')
-		.map((b: any) => b.text)
-		.join('\n');
+// Turn Claude's JSON reply into the macro shape the client expects.
+function shapeMacros(text: string) {
 	const parsed = parseJsonLoose(text) || {};
 	const pick = (v: any) => (typeof v === 'number' && isFinite(v) ? v : null);
 	return {
@@ -95,7 +52,11 @@ async function scanWithClaude(buf: Buffer, mediaType: string) {
 	};
 }
 
-/* ---------- Tesseract (fallback when no API key) ---------- */
+async function scanWithClaude(buf: Buffer, mediaType: string) {
+	return shapeMacros(await analyzeImage(buf, mediaType, PROMPT));
+}
+
+/* ---------- Tesseract (fallback when the CLI isn't available) ---------- */
 
 const CACHE_DIR = path.join(path.dirname(env.DATABASE_PATH || 'data/foundry.db'), 'tesseract');
 let workerPromise: Promise<any> | null = null;
@@ -162,14 +123,12 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const buf = Buffer.from(await file.arrayBuffer());
 	const mediaType = file.type && file.type.startsWith('image/') ? file.type : 'image/jpeg';
 
+	const haveClaude = claudeAvailable();
 	try {
-		if (env.ANTHROPIC_API_KEY) {
-			return json(await scanWithClaude(buf, mediaType));
-		}
-		return json(await scanWithTesseract(buf));
+		return json(haveClaude ? await scanWithClaude(buf, mediaType) : await scanWithTesseract(buf));
 	} catch (e) {
-		// If Claude fails for any reason, try Tesseract before giving up.
-		if (env.ANTHROPIC_API_KEY) {
+		// If the Claude CLI fails for any reason, fall back to Tesseract before giving up.
+		if (haveClaude) {
 			try {
 				return json(await scanWithTesseract(buf));
 			} catch {

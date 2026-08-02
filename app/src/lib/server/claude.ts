@@ -340,6 +340,95 @@ export function childEnv(): NodeJS.ProcessEnv {
 	return out;
 }
 
+const SCAN_TIMEOUT_MS = 90 * 1000;
+
+function scanExt(mediaType: string): string {
+	if (mediaType.includes('png')) { return 'png'; }
+	if (mediaType.includes('webp')) { return 'webp'; }
+	if (mediaType.includes('gif')) { return 'gif'; }
+	return 'jpg';
+}
+
+/**
+ * One-shot image analysis through the same `claude` CLI the chat uses, so vision
+ * features run on the owner's Claude subscription (CLAUDE_CODE_OAUTH_TOKEN) with
+ * no separate ANTHROPIC_API_KEY. Drops the image into the agent workspace, runs a
+ * single headless turn scoped to just the Read tool on that one file (Read renders
+ * images to the model), and returns the model's text reply. The temp image is
+ * always removed. Throws if the CLI isn't runnable or produced nothing — the
+ * caller (e.g. label scanning) then falls back to on-device OCR.
+ */
+export async function analyzeImage(
+	buf: Buffer,
+	mediaType: string,
+	instructions: string
+): Promise<string> {
+	fs.mkdirSync(WORKSPACE, { recursive: true });
+	const name = `.scan-${process.pid}-${Date.now()}.${scanExt(mediaType)}`;
+	const file = path.join(WORKSPACE, name);
+	fs.writeFileSync(file, buf, { mode: 0o600 });
+
+	const prompt = `Read the image file ./${name} in the current directory, then: ${instructions}`;
+	const args = [
+		'-p',
+		prompt,
+		'--output-format',
+		'json',
+		'--permission-mode',
+		'acceptEdits',
+		// Only the Read tool — no shell, no web, no MCP. Enough to look at the image.
+		'--tools',
+		'Read',
+		'--settings',
+		JSON.stringify({ permissions: { allow: [`Read(${file})`], deny: [] } })
+	];
+	if (env.CLAUDE_MODEL) { args.push('--model', env.CLAUDE_MODEL); }
+
+	return new Promise<string>((resolve, reject) => {
+		const child = spawn(BIN, args, {
+			cwd: WORKSPACE,
+			env: childEnv(),
+			stdio: ['ignore', 'pipe', 'pipe']
+		});
+		let stdout = '';
+		let stderr = '';
+		const timer = setTimeout(() => child.kill('SIGTERM'), SCAN_TIMEOUT_MS);
+		const cleanup = () => {
+			clearTimeout(timer);
+			fs.rmSync(file, { force: true });
+		};
+		child.stdout.setEncoding('utf8');
+		child.stdout.on('data', (c: string) => { stdout += c; });
+		child.stderr.setEncoding('utf8');
+		child.stderr.on('data', (c: string) => { if (stderr.length < 4000) { stderr += c; } });
+		child.on('error', (e: any) => {
+			cleanup();
+			const hint =
+				e?.code === 'ENOENT'
+					? `The \`claude\` CLI was not found (looked for "${BIN}").`
+					: String(e?.message || e);
+			reject(new Error(hint));
+		});
+		child.on('close', () => {
+			cleanup();
+			// `--output-format json` prints one result envelope; fall back to raw stdout.
+			let text = '';
+			try {
+				const obj = JSON.parse(stdout);
+				if (obj && !obj.is_error && typeof obj.result === 'string') { text = obj.result; }
+			} catch (e) {
+				/* not the JSON envelope — use raw stdout below */
+			}
+			if (!text) { text = stdout; }
+			if (!text.trim()) {
+				reject(new Error(stderr.trim() || 'claude returned no output'));
+				return;
+			}
+			resolve(text);
+		});
+	});
+}
+
 export type ClaudeEvent =
 	| { type: 'session'; sessionId: string }
 	| { type: 'delta'; text: string }
