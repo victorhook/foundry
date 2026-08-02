@@ -107,7 +107,7 @@
   .hero-date { font-size: 0.82rem; color: var(--muted); margin: 4px 0 22px; }
   .greeting { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; margin: 2px 0 0; text-wrap: balance; }
 
-  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 28px 2px 12px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 18px 2px 12px; }
   .section-head .eyebrow { margin: 0; }
 
   .routines { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

@@ -1118,7 +1118,7 @@ function buildDrawer() {
       ${item("chats", "\u{1F4AC}", "AI chat")}
       ${item("goals", "\u{1F3AF}", "Goals")}
       ${item("nutrition", "\u{1F34E}", "Nutrition")}
-      ${item("history", "\u{1F4D6}", "History")}
+      ${item("history", "\u{1F4D6}", "Workout History")}
       ${item("exercises", "\u{1F3CB}\u{FE0F}", "Exercises")}
       ${item("notes", "\u{1F4DD}", "Notes")}
       ${item("pain", "\u{1F915}", "Pain")}
@@ -1983,7 +1983,7 @@ function viewDetail() {
   const w = state.workouts.find((x) => x.id === state.detailId);
   if (!w) {
     if (state.loaded) { go("history"); return ""; }
-    return loadingShell("History", "history");
+    return loadingShell("Workout History", "history");
   }
 
   // Compact: one dense line per exercise (name + set summary), with pain/note
@@ -2019,7 +2019,7 @@ function viewDetail() {
     : "";
 
   return `<div class="app">
-    ${header({ back: true, backLabel: "History" })}
+    ${header({ back: true, backLabel: "Workout History" })}
     <main>
       <div class="section-head"><span class="eyebrow"><span class="type-dot" style="background:${typeColor(w)}"></span>${w.routineName || "Workout"}${w.theme ? " · " + escAttr(w.theme) : ""} · ${fmtDate(w.startedAt)}</span></div>
       <div class="finish-block">
