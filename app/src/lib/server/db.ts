@@ -478,7 +478,12 @@ const migrations: Array<(d: Database.Database) => void> = [
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			content TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER NOT NULL DEFAULT 0
-		)`)
+		)`),
+
+	// vN -> vN+1: batch-cooked meals. A saved meal's items are the whole pot as
+	// cooked; `servings` says how many portions that pot makes, so logging one
+	// portion scales every item by 1/servings. Existing meals are single-serving.
+	(d) => d.exec(`ALTER TABLE meal ADD COLUMN servings REAL NOT NULL DEFAULT 1`)
 ];
 
 function migrate() {
@@ -1277,7 +1282,7 @@ export function deleteFood(id: string) {
 
 /* ---- Nutrition: saved meals (bundles of foods, each with a gram amount) ---- */
 export function getMeals() {
-	const meals = db.prepare('SELECT id, name, icon, everyday, slot FROM meal ORDER BY name').all() as any[];
+	const meals = db.prepare('SELECT id, name, icon, everyday, slot, servings FROM meal ORDER BY name').all() as any[];
 	const items = db
 		.prepare('SELECT meal_id, food_id, grams, qty, name, kcal, protein, carbs, fat FROM meal_item ORDER BY ord')
 		.all() as any[];
@@ -1300,6 +1305,7 @@ export function getMeals() {
 		icon: m.icon || null,
 		everyday: !!m.everyday,
 		slot: m.slot || null,
+		servings: m.servings || 1,
 		items: byMeal[m.id] || []
 	}));
 }
@@ -1311,11 +1317,12 @@ function getMeal(id: string) {
 export const saveMeal = db.transaction((m: any) => {
 	const id = m.id || uid();
 	const exists = db.prepare('SELECT id FROM meal WHERE id = ?').get(id);
+	const servings = Number(m.servings) > 0 ? Number(m.servings) : 1;
 	if (exists) {
-		db.prepare('UPDATE meal SET name = ?, icon = ?, everyday = ?, slot = ? WHERE id = ?').run(m.name, m.icon ?? null, m.everyday ? 1 : 0, m.slot ?? null, id);
+		db.prepare('UPDATE meal SET name = ?, icon = ?, everyday = ?, slot = ?, servings = ? WHERE id = ?').run(m.name, m.icon ?? null, m.everyday ? 1 : 0, m.slot ?? null, servings, id);
 		db.prepare('DELETE FROM meal_item WHERE meal_id = ?').run(id);
 	} else {
-		db.prepare('INSERT INTO meal (id, name, icon, everyday, slot, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, m.name, m.icon ?? null, m.everyday ? 1 : 0, m.slot ?? null, Date.now());
+		db.prepare('INSERT INTO meal (id, name, icon, everyday, slot, servings, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, m.name, m.icon ?? null, m.everyday ? 1 : 0, m.slot ?? null, servings, Date.now());
 	}
 	const ins = db.prepare(
 		'INSERT INTO meal_item (id, meal_id, food_id, ord, grams, qty, name, kcal, protein, carbs, fat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'

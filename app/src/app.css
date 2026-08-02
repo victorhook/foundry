@@ -16,6 +16,8 @@
     --radius-sm: 10px;
     --frame: 480px;
     --pad: 18px;
+    /* Height of the sticky app bar — what `position: sticky` offsets park under. */
+    --bar-h: 58px;
     --tap: 46px;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     font-size: 16px;
@@ -72,7 +74,17 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    min-height: 58px;
+    min-height: var(--bar-h);
+  }
+
+  /* A primary action that stays reachable while its list scrolls: parks right
+     under the app bar. The ground-colored padding hides content sliding beneath. */
+  .sticky-action {
+    position: sticky;
+    top: var(--bar-h);
+    z-index: 15;
+    background: var(--ground);
+    padding-bottom: 12px;
   }
   .wordmark { font-weight: 800; letter-spacing: -0.02em; font-size: 1.05rem; }
   .wordmark span { color: var(--accent); }
@@ -1000,6 +1012,21 @@
   .macro-lbl { font-size: 0.68rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
   .macro-val { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
   .macro-val.over { color: var(--hot); }
+
+  /* Macro tiles for a saved meal / a chosen portion — no daily target, so no bar. */
+  .macro-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 14px; }
+  .macro-stat { background: var(--surface-2); border-radius: var(--radius-sm); padding: 9px 6px; text-align: center; }
+  .macro-stat .ms-val { font-weight: 800; font-size: 1rem; line-height: 1.1; }
+  .macro-stat .ms-lbl {
+    display: block; margin-top: 3px; font-size: 0.62rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  }
+  /* "Makes N portions" tag on a batch-cooked meal. */
+  .portion-badge {
+    display: inline-block; padding: 3px 9px; border-radius: 999px; flex-shrink: 0;
+    background: var(--surface-2); border: 1px solid var(--line);
+    color: var(--muted); font-size: 0.72rem; font-weight: 700;
+  }
 
   .nutri-slot { margin-bottom: 16px; }
   .slot-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 8px; }

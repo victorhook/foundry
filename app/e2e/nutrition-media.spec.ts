@@ -86,6 +86,59 @@ test('nutrition: build a saved meal and log it in one tap', async ({ page }) => 
 	await expect(page.locator('.kcal-num')).toHaveText('140');
 });
 
+// Batch cooking: the meal's foods are the whole pot and `servings` splits it,
+// so logging asks how much of it you're having and scales every food to match.
+test('nutrition: a batch meal logs a fraction of the pot', async ({ page }) => {
+	await login(page);
+	await openNutritionOn(page, '2024-10-05');
+
+	// 100 kcal / 100 g keeps the arithmetic obvious.
+	await page.locator('[data-act="add-food"][data-slot="dinner"]').click();
+	await page.getByRole('button', { name: /New food/ }).click();
+	await page.locator('[data-act="food-field"][data-field="name"]').fill('ZZ Test Chili');
+	await page.locator('[data-act="food-field"][data-field="kcal"]').fill('100');
+	await page.locator('[data-act="food-field"][data-field="protein"]').fill('10');
+	await page.getByRole('button', { name: /Add food/ }).click();
+
+	// A pot of 900 g cooked as 3 portions → 300 kcal / 30 g protein per portion.
+	await page.getByRole('button', { name: 'Meals' }).click();
+	await page.getByRole('button', { name: /New meal/ }).click();
+	await page.locator('[data-act="meal-name"]').fill('Chili batch');
+	await page.getByRole('button', { name: /Add food/ }).click();
+	await page.locator('.meal-chooser [data-act="meal-add-food"]', { hasText: 'ZZ Test Chili' }).click();
+	await page.locator('[data-act="meal-grams"]').fill('900');
+	await page.locator('[data-act="meal-servings"]').fill('3');
+	await page.locator('[data-act="meal-serv-inc"]').click(); // 3 -> 4
+	await page.locator('[data-act="meal-serv-dec"]').click(); // back to 3
+	// The summary reads per portion, with the whole batch spelled out below it.
+	await expect(page.locator('.kcal-num')).toHaveText('300');
+	await expect(page.locator('.macro-stat').first()).toContainText('30g');
+	await expect(page.locator('.nutri-card')).toContainText('Whole batch: 900 kcal');
+	await page.getByRole('button', { name: /Create meal/ }).click();
+
+	// Logging it asks for the amount instead of dumping the whole pot in.
+	await expect(page.locator('[data-act="log-meal"]', { hasText: 'Chili batch' })).toContainText(
+		'Per portion: 300 kcal'
+	);
+	await page.locator('[data-act="log-meal"]', { hasText: 'Chili batch' }).first().click();
+	await page.locator('[data-act="portion-inc"]').click(); // 1 -> 1.5 portions
+	await expect(page.locator('.sheet .kcal-num')).toHaveText('450');
+	await page.getByRole('button', { name: /Add to Dinner/ }).click();
+
+	// 1.5 of 3 portions = 450 g of the 900 g pot.
+	await page.locator('.back-btn').click();
+	await expect(page.locator('.entry-qty')).toHaveText('450 g');
+	await expect(page.locator('.kcal-num')).toHaveText('450');
+
+	// Reopening keeps the batch size (it round-trips through SQLite).
+	await page.reload();
+	await page.locator('[data-act="add-food"][data-slot="dinner"]').click();
+	await page.getByRole('button', { name: 'Meals' }).click();
+	await expect(page.locator('[data-act="log-meal"]', { hasText: 'Chili batch' })).toContainText(
+		'3 portions'
+	);
+});
+
 test('nutrition per-100g: meal by grams + everyday one-tap add', async ({ page }) => {
 	await login(page);
 	await openNutritionOn(page, '2024-09-01');

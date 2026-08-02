@@ -98,6 +98,8 @@ function load() {
     mealSlots: [],
     // Ephemeral UI for the "Meal sections" manager on the nutrition screen.
     mealSections: { open: false, editing: null, text: "", newOpen: false, newText: "" },
+    // "How much of this batch?" sheet: { id, portions } while open, else null.
+    mealPortion: null,
     // The AI chat agent's cross-chat memory + the editor overlay (null = closed).
     agentMemory: "",
     memoryEdit: null,
@@ -1175,7 +1177,7 @@ function confirmModal() {
 // Global overlays layered on top of whatever view is showing. (The nav drawer is
 // a persistent element on <body>, managed outside render() for smooth gestures.)
 function overlays() {
-  return confirmModal() + entryEditSheet() + targetsSheet() + memorySheet();
+  return confirmModal() + entryEditSheet() + mealPortionSheet() + targetsSheet() + memorySheet();
 }
 
 /* ---- Home ---- */
@@ -2646,6 +2648,7 @@ function todayISO() { return dateInputValue(Date.now()); }
 function nutriTargets() { return (state.profile && state.profile.targets) || { kcal: null, protein: null, carbs: null, fat: null }; }
 function numOrNull(v) { if (v === "" || v == null) { return null; } const n = parseFloat(v); return isNaN(n) ? null : n; }
 function round1(n) { return Math.round(n * 10) / 10; }
+function round2(n) { return Math.round(n * 100) / 100; }
 function fmtNum(n) { return Number.isInteger(n) ? String(n) : String(round1(n)); }
 function slotTitle(key) { const s = mealSlots().find((x) => x.id === key); return s ? s.name : "Meal"; }
 
@@ -2711,17 +2714,40 @@ function logFood(f) {
   if (!f) { return; }
   addLogEntries(state.addFood.slot, [foodToEntry(f, DEFAULT_GRAMS)]);
 }
-function mealToEntries(m) {
+// A meal's items describe the whole batch as cooked; `servings` is how many
+// portions that batch makes. Logging `portions` of it scales every item by
+// portions/servings — one portion of a 3-portion pot logs a third of each food.
+function mealServings(m) { return Math.max(1, Math.round(Number(m && m.servings) || 1)); }
+function mealToEntries(m, portions) {
+  const f = (portions != null ? portions : 1) / mealServings(m);
   return (m.items || []).map((it) => ({
-    foodId: it.foodId, grams: it.grams != null ? it.grams : null, qty: it.grams != null ? undefined : (it.qty || 1),
+    foodId: it.foodId,
+    grams: it.grams != null ? round1(it.grams * f) : null,
+    qty: it.grams != null ? undefined : round2((it.qty || 1) * f),
     name: it.name, kcal: it.kcal, protein: it.protein, carbs: it.carbs, fat: it.fat
   }));
 }
+// Macros for `portions` portions of a saved meal (defaults to one portion).
+function mealTotals(m, portions) { return sumTotals(mealToEntries(m, portions)); }
 function logMeal(m) {
   if (!m) { return; }
-  const entries = mealToEntries(m);
-  if (!entries.length) { toast("Empty meal"); return; }
-  addLogEntries(state.addFood.slot, entries);
+  if (!(m.items || []).length) { toast("Empty meal"); return; }
+  // Batch meals ask how much of the pot you're having; single-serving ones just log.
+  if (mealServings(m) > 1) { state.mealPortion = { id: m.id, portions: 1 }; render(); return; }
+  addLogEntries(state.addFood.slot, mealToEntries(m, 1));
+}
+// Log the portion chosen in the sheet.
+function logMealPortion() {
+  const p = state.mealPortion;
+  const m = state.meals.find((x) => x.id === p.id);
+  state.mealPortion = null;
+  if (!m) { render(); return; }
+  addLogEntries(state.addFood.slot, mealToEntries(m, p.portions));
+}
+function bumpMealPortion(delta) {
+  const p = state.mealPortion;
+  p.portions = Math.max(0.5, Math.min(99, round2(p.portions + delta)));
+  render();
 }
 // Add all "everyday" meals to the current day, each into its default slot.
 function addDailyMeals() {
@@ -2732,7 +2758,7 @@ function addDailyMeals() {
     let added = 0;
     for (const m of daily) {
       try {
-        const log = await apiPost("/api/nutrition", { day, slot: m.slot || firstSlotId(), entries: mealToEntries(m) });
+        const log = await apiPost("/api/nutrition", { day, slot: m.slot || firstSlotId(), entries: mealToEntries(m, 1) });
         if (state.nutritionDay === day) { state.dayLog = log; }
         added++;
       } catch (e) { /* continue */ }
@@ -2845,8 +2871,8 @@ function deleteFoodById(id) {
 function openMealEdit(id, back) {
   const m = id ? state.meals.find((x) => x.id === id) : null;
   state.mealEdit = m
-    ? { id: m.id, name: m.name, icon: m.icon || "", everyday: !!m.everyday, slot: m.slot || null, items: m.items.map((it) => ({ ...it })) }
-    : { id: null, name: "", icon: "", everyday: false, slot: null, items: [] };
+    ? { id: m.id, name: m.name, icon: m.icon || "", everyday: !!m.everyday, slot: m.slot || null, servings: mealServings(m), items: m.items.map((it) => ({ ...it })) }
+    : { id: null, name: "", icon: "", everyday: false, slot: null, servings: 1, items: [] };
   state.mealEditReturn = back || "addfood";
   state.mealAddOpen = false; state.mealQ = "";
   go("mealedit");
@@ -2868,7 +2894,7 @@ async function saveMealEdit() {
   if (!m.items.length) { toast("Add a food"); return; }
   let saved;
   try {
-    saved = await apiPost("/api/meals", { id: m.id || undefined, name: m.name.trim(), icon: m.icon || null, everyday: !!m.everyday, slot: m.slot || null, items: m.items });
+    saved = await apiPost("/api/meals", { id: m.id || undefined, name: m.name.trim(), icon: m.icon || null, everyday: !!m.everyday, slot: m.slot || null, servings: m.servings || 1, items: m.items });
   } catch (e) { toast("Couldn't save meal"); return; }
   const i = state.meals.findIndex((x) => x.id === saved.id);
   if (i >= 0) { state.meals[i] = saved; } else { state.meals.push(saved); }
@@ -2888,7 +2914,7 @@ function saveSlotAsMeal(slot) {
   const items = (state.dayLog || []).filter((e) => e.slot === slot)
     .map((e) => ({ foodId: e.foodId, grams: e.grams != null ? e.grams : null, qty: e.grams != null ? undefined : (e.qty || 1), name: e.name, kcal: e.kcal, protein: e.protein, carbs: e.carbs, fat: e.fat }));
   if (!items.length) { toast("Nothing to save"); return; }
-  state.mealEdit = { id: null, name: "", icon: "", everyday: false, slot, items };
+  state.mealEdit = { id: null, name: "", icon: "", everyday: false, slot, servings: 1, items };
   state.mealEditReturn = "nutrition";
   state.mealAddOpen = false; state.mealQ = "";
   go("mealedit");
@@ -3084,11 +3110,12 @@ function viewAddFood() {
   } else if (mode === "meals") {
     const rows = state.meals.length
       ? state.meals.map((m) => {
-          const tot = sumTotals(m.items);
+          const s = mealServings(m);
+          const per = mealTotals(m, 1);
           return `<div class="pick-food">
             <button class="pick-food-main" data-act="log-meal" data-id="${m.id}">
-              <span class="pf-name">${m.icon ? m.icon + " " : ""}${escAttr(m.name)}</span>
-              <span class="pf-macro">${m.items.length} item${m.items.length !== 1 ? "s" : ""} · ${fmtNum(Math.round(tot.kcal))} kcal</span>
+              <span class="pf-name">${m.icon ? m.icon + " " : ""}${escAttr(m.name)}${s > 1 ? ` <span class="portion-badge">${s} portions</span>` : ""}</span>
+              <span class="pf-macro">${s > 1 ? "Per portion: " : ""}${macroLine(per)}</span>
             </button>
             <button class="pf-edit" data-act="edit-meal" data-id="${m.id}" aria-label="Edit meal">✎</button>
           </div>`;
@@ -3151,11 +3178,48 @@ function viewFoodEdit() {
   </div>`;
 }
 
+// Kcal + P/C/F tiles for a set of macros. Used wherever a meal's summary is
+// shown (no daily target involved, so no progress bars).
+function macroStats(t) {
+  const stat = (lbl, val, color) => `<div class="macro-stat">
+    <div class="ms-val tnum" style="color:${color}">${fmtNum(round1(val))}g</div><span class="ms-lbl">${lbl}</span></div>`;
+  return `<div class="macro-stats">
+    ${stat("Protein", t.protein, "var(--cool)")}
+    ${stat("Carbs", t.carbs, "var(--warm)")}
+    ${stat("Fat", t.fat, "var(--accent)")}
+  </div>`;
+}
+function macroLine(t) {
+  return `${fmtNum(Math.round(t.kcal))} kcal · P ${fmtNum(round1(t.protein))} · C ${fmtNum(round1(t.carbs))} · F ${fmtNum(round1(t.fat))}`;
+}
+
+// The meal editor's macro summary: per portion up top, whole batch underneath.
+// Kept separate so typing a gram amount can refresh it in place — a full
+// render() would replace the very input being typed into.
+function mealSummaryInner(m) {
+  const servings = mealServings(m);
+  const per = mealTotals(m, 1);
+  return `<div class="nutri-kcal">
+      <div class="kcal-block">
+        <div class="kcal-num tnum">${fmtNum(Math.round(per.kcal))}</div>
+        <div class="kcal-cap"><span class="kcal-target">kcal ${servings > 1 ? "per portion" : "total"}</span></div>
+      </div>
+      ${servings > 1 ? `<span class="portion-badge">${servings} portions</span>` : ""}
+    </div>
+    ${macroStats(per)}
+    ${servings > 1 ? `<div class="kcal-cap" style="margin-top:12px;">Whole batch: ${macroLine(sumTotals(m.items))}</div>` : ""}`;
+}
+// Typing an amount updates the summary without touching the rest of the form.
+function refreshMealSummary() {
+  const card = app.querySelector(".meal-summary");
+  if (card && state.mealEdit) { card.innerHTML = mealSummaryInner(state.mealEdit); }
+}
+
 function viewMealEdit() {
   const m = state.mealEdit;
   if (!m) { go("addfood"); return ""; }
   const editing = !!m.id;
-  const tot = sumTotals(m.items);
+  const servings = mealServings(m);
   const items = m.items.map((it, i) => {
     const g = it.grams != null ? it.grams : DEFAULT_GRAMS;
     const kcal = Math.round((it.kcal || 0) * (it.grams != null ? g / 100 : (it.qty || 1)));
@@ -3193,14 +3257,31 @@ function viewMealEdit() {
     ${m.everyday ? `<div class="eyebrow" style="margin:12px 2px 8px;">Default meal</div><div class="chip-row">${slotChips}</div>` : ""}
   </div>`;
 
+  // Batch cooking: the foods below are the whole pot, `servings` splits it into
+  // portions. The summary reads per portion, with the batch total underneath.
+  const servingsBlock = `<div class="finish-block" style="margin-top:16px;">
+    <span class="eyebrow">Portions this makes</span>
+    <div class="set-fields"><div class="step-grp">
+      <button class="step-btn" data-act="meal-serv-dec">−</button>
+      <input class="step-val tnum" type="number" inputmode="numeric" min="1" value="${servings}" data-act="meal-servings" aria-label="Portions">
+      <button class="step-btn" data-act="meal-serv-inc">+</button>
+    </div></div>
+    <div class="form-hint" style="margin-top:8px;">${servings > 1
+      ? `Add the foods for the whole batch — logging this meal asks how many of the ${servings} portions you're having.`
+      : `Cooking for more than one meal? Bump this and add the foods for the whole batch.`}</div>
+  </div>`;
+
   return `<div class="app">
     ${header({ back: true, backLabel: state.mealEditReturn === "nutrition" ? "Nutrition" : "Back" })}
     <main>
-      <div class="section-head"><span class="eyebrow">${editing ? "Edit meal" : "New meal"} · ${fmtNum(Math.round(tot.kcal))} kcal</span></div>
+      <div class="section-head"><span class="eyebrow">${editing ? "Edit meal" : "New meal"}</span></div>
       <div class="tpl-name-row">
         <input class="picker-search" style="margin:0;flex:0 0 3.2rem;text-align:center;" placeholder="🍳" value="${escAttr(m.icon || "")}" data-act="meal-icon" maxlength="2" aria-label="Icon">
         <input class="picker-search" style="margin:0;flex:1;" placeholder="Meal name" value="${escAttr(m.name || "")}" data-act="meal-name">
       </div>
+      <div class="nutri-card meal-summary" style="margin-top:16px;">${mealSummaryInner(m)}</div>
+      ${servingsBlock}
+      <div class="eyebrow" style="margin:20px 2px 10px;">${servings > 1 ? "Foods (whole batch)" : "Foods"}</div>
       ${items}
       ${chooser}
       ${everydayBlock}
@@ -3241,6 +3322,52 @@ function entryEditSheet() {
       <div class="sheet-actions">
         <button class="btn btn-ghost" data-act="del-entry" data-id="${e.id}">Delete</button>
         <button class="btn btn-primary" data-act="save-entry">Save</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Macros for the amount currently dialed in on the portion sheet.
+function portionSummaryInner(m, portions) {
+  const t = mealTotals(m, portions);
+  return `<div class="nutri-kcal"><div class="kcal-block">
+      <div class="kcal-num tnum">${fmtNum(Math.round(t.kcal))}</div>
+      <div class="kcal-cap"><span class="kcal-target">kcal for ${fmtNum(portions)} of ${mealServings(m)}</span></div>
+    </div></div>
+    ${macroStats(t)}`;
+}
+function refreshPortionSummary() {
+  const p = state.mealPortion;
+  const card = app.querySelector(".portion-summary");
+  const m = p && state.meals.find((x) => x.id === p.id);
+  if (card && m) { card.innerHTML = portionSummaryInner(m, p.portions); }
+}
+
+// "How much of the batch?" — shown when logging a meal that makes several
+// portions. Macros update live with the amount picked.
+function mealPortionSheet() {
+  const p = state.mealPortion;
+  if (!p) { return ""; }
+  const m = state.meals.find((x) => x.id === p.id);
+  if (!m) { return ""; }
+  const s = mealServings(m);
+  const quick = [0.5, 1, 2, s].filter((v, i, a) => v <= s && a.indexOf(v) === i);
+  const chips = quick.map((v) => `<button class="chip ${p.portions === v ? "active" : ""}" data-act="portion-set" data-v="${v}">${fmtNum(v)}${v === s && s > 1 ? " (all)" : ""}</button>`).join("");
+  return `<div class="sheet-wrap" data-act="close-portion">
+    <div class="sheet" data-act="noop">
+      <div class="eyebrow" style="margin-bottom:12px;">${m.icon ? m.icon + " " : ""}${escAttr(m.name)} · makes ${s}</div>
+      <div class="finish-block"><span class="eyebrow">Portions you're having</span>
+        <div class="set-fields"><div class="step-grp">
+          <button class="step-btn" data-act="portion-dec">−</button>
+          <input class="step-val tnum" type="number" inputmode="decimal" step="0.5" min="0.5" value="${fmtNum(p.portions)}" data-act="portion-val" aria-label="Portions">
+          <button class="step-btn" data-act="portion-inc">+</button>
+        </div></div>
+        <div class="chip-row" style="margin-top:10px;">${chips}</div>
+      </div>
+      <div class="nutri-card portion-summary">${portionSummaryInner(m, p.portions)}</div>
+      <div class="sheet-actions">
+        <button class="btn btn-ghost" data-act="close-portion">Cancel</button>
+        <button class="btn btn-primary" data-act="log-portion">Add to ${escAttr(slotTitle(state.addFood && state.addFood.slot))}</button>
       </div>
     </div>
   </div>`;
@@ -3930,7 +4057,7 @@ function viewPain() {
     ${header({ back: true, backLabel: "Home" })}
     <main>
       <div class="section-head"><span class="eyebrow">Pain log</span></div>
-      <button class="add-ex-btn" data-act="new-painnote" style="margin-bottom:14px;">＋  Log pain</button>
+      <div class="sticky-action"><button class="add-ex-btn" data-act="new-painnote">＋  Log pain</button></div>
       ${body}
       ${painAreasSection()}
       ${remindersSection()}
@@ -5064,6 +5191,13 @@ app.addEventListener("click", (e) => {
     case "meal-new-food": openFoodEdit(null, "mealedit"); break;
     case "meal-everyday": state.mealEdit.everyday = !state.mealEdit.everyday; if (state.mealEdit.everyday && !state.mealEdit.slot) { state.mealEdit.slot = firstSlotId(); } render(); break;
     case "meal-slot": state.mealEdit.slot = t.dataset.slot; render(); break;
+    case "meal-serv-inc": state.mealEdit.servings = Math.min(99, mealServings(state.mealEdit) + 1); render(); break;
+    case "meal-serv-dec": state.mealEdit.servings = Math.max(1, mealServings(state.mealEdit) - 1); render(); break;
+    case "close-portion": state.mealPortion = null; render(); break;
+    case "portion-inc": bumpMealPortion(+0.5); break;
+    case "portion-dec": bumpMealPortion(-0.5); break;
+    case "portion-set": state.mealPortion.portions = parseFloat(t.dataset.v); render(); break;
+    case "log-portion": logMealPortion(); break;
     case "add-daily": addDailyMeals(); break;
     case "food-img-pick": { const el = document.getElementById("food-img-file"); if (el) { el.click(); } break; }
     case "food-img-remove": state.foodEdit.image = null; render(); break;
@@ -5260,8 +5394,10 @@ app.addEventListener("input", (e) => {
         : `<div class="empty">No foods — create one.</div>`;
     });
   }
-  else if (act === "meal-qty") { state.mealEdit.items[parseInt(t.dataset.i, 10)].qty = numOrNull(t.value) || 1; }
-  else if (act === "meal-grams") { state.mealEdit.items[parseInt(t.dataset.i, 10)].grams = numOrNull(t.value) || 0; }
+  else if (act === "meal-qty") { state.mealEdit.items[parseInt(t.dataset.i, 10)].qty = numOrNull(t.value) || 1; refreshMealSummary(); }
+  else if (act === "meal-grams") { state.mealEdit.items[parseInt(t.dataset.i, 10)].grams = numOrNull(t.value) || 0; refreshMealSummary(); }
+  else if (act === "meal-servings") { state.mealEdit.servings = Math.max(1, Math.min(99, Math.round(numOrNull(t.value) || 1))); refreshMealSummary(); }
+  else if (act === "portion-val") { state.mealPortion.portions = Math.max(0.5, Math.min(99, round2(numOrNull(t.value) || 1))); refreshPortionSummary(); }
   else if (act === "entry-qty") { state.entryEdit.qty = t.value; }
   else if (act === "entry-grams") { state.entryEdit.grams = t.value; }
   else if (act === "entry-field") { state.entryEdit[t.dataset.field] = t.value; }
