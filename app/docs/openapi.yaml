@@ -73,6 +73,15 @@ components:
         meals:
           type: array
           items: { $ref: "#/components/schemas/Meal" }
+        mealSlots:
+          type: array
+          description: The daily diary's meal sections (Breakfast, Lunch, …), in display order. `id` is the slug that FoodLog/Meal `slot` values reference.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              ord: { type: integer }
         profile:
           $ref: "#/components/schemas/Profile"
         bodyWeights:

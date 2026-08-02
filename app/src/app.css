@@ -1005,6 +1005,9 @@
   .slot-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 8px; }
   .slot-title { font-weight: 700; font-size: 1.02rem; }
   .slot-kcal { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+  .slot-macros-row { margin: -4px 2px 8px; }
+  .slot-macros { color: var(--muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+  .msec-move-wrap { display: inline-flex; gap: 4px; }
   .entry {
     width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
     background: var(--surface); border: 1px solid var(--line); border-radius: 12px;

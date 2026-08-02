@@ -95,6 +95,9 @@ function load() {
     goals: [],
     foods: [],
     meals: [],
+    mealSlots: [],
+    // Ephemeral UI for the "Meal sections" manager on the nutrition screen.
+    mealSections: { open: false, editing: null, text: "", newOpen: false, newText: "" },
     profile: { dob: null, height: null, gender: null, targets: { kcal: null, protein: null, carbs: null, fat: null } },
     bodyWeights: [],
     albums: [],
@@ -2629,14 +2632,19 @@ async function deletePhotoById(id) {
 }
 
 /* ============ Nutrition ============ */
-const NUTRI_SLOTS = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"], ["snack", "Snacks"]];
+// Meal sections are user-configurable — state.mealSlots is [{id,name,ord}], where
+// `id` is the slug food_log.slot / meal.slot reference. Fall back to the built-in
+// four only before the first data load (so nothing renders empty on cold boot).
+const DEFAULT_SLOTS = [{ id: "breakfast", name: "Breakfast" }, { id: "lunch", name: "Lunch" }, { id: "dinner", name: "Dinner" }, { id: "snack", name: "Snacks" }];
+function mealSlots() { return state.mealSlots && state.mealSlots.length ? state.mealSlots : DEFAULT_SLOTS; }
+function firstSlotId() { const s = mealSlots()[0]; return s ? s.id : "snack"; }
 
 function todayISO() { return dateInputValue(Date.now()); }
 function nutriTargets() { return (state.profile && state.profile.targets) || { kcal: null, protein: null, carbs: null, fat: null }; }
 function numOrNull(v) { if (v === "" || v == null) { return null; } const n = parseFloat(v); return isNaN(n) ? null : n; }
 function round1(n) { return Math.round(n * 10) / 10; }
 function fmtNum(n) { return Number.isInteger(n) ? String(n) : String(round1(n)); }
-function slotTitle(key) { const s = NUTRI_SLOTS.find((x) => x[0] === key); return s ? s[1] : "Meal"; }
+function slotTitle(key) { const s = mealSlots().find((x) => x.id === key); return s ? s.name : "Meal"; }
 
 // Food entries store per-100g macros + grams → total = per100g × g/100.
 // Quick-add / legacy entries have no grams → total = macros × qty.
@@ -2721,7 +2729,7 @@ function addDailyMeals() {
     let added = 0;
     for (const m of daily) {
       try {
-        const log = await apiPost("/api/nutrition", { day, slot: m.slot || "snack", entries: mealToEntries(m) });
+        const log = await apiPost("/api/nutrition", { day, slot: m.slot || firstSlotId(), entries: mealToEntries(m) });
         if (state.nutritionDay === day) { state.dayLog = log; }
         added++;
       } catch (e) { /* continue */ }
@@ -2949,16 +2957,21 @@ function viewNutrition() {
     </div>
   </div>`;
 
-  const slotsHtml = NUTRI_SLOTS.map(([key, title]) => {
+  const slotsHtml = mealSlots().map(({ id: key, name: title }) => {
     const entries = (state.dayLog || []).filter((e) => e.slot === key);
     const st = sumTotals(entries);
     const rows = entries.map(entryRow).join("");
     const saveMealBtn = entries.length ? `<button class="text-btn" data-act="slot-save-meal" data-slot="${key}">Save as meal</button>` : "";
+    // Short macro summary per section (only when it has food logged).
+    const macroSummary = entries.length
+      ? `<span class="slot-macros tnum">P ${fmtNum(round1(st.protein))} · C ${fmtNum(round1(st.carbs))} · F ${fmtNum(round1(st.fat))}</span>`
+      : "";
     return `<div class="nutri-slot">
       <div class="slot-head">
-        <span class="slot-title">${title}</span>
+        <span class="slot-title">${escAttr(title)}</span>
         <span class="slot-kcal tnum">${fmtNum(Math.round(st.kcal))} kcal</span>
       </div>
+      ${macroSummary ? `<div class="slot-macros-row">${macroSummary}</div>` : ""}
       ${rows}
       <div class="slot-actions">
         <button class="add-ex-btn slot-add" data-act="add-food" data-slot="${key}">＋ Add</button>
@@ -2981,8 +2994,51 @@ function viewNutrition() {
       ${totalsCard}
       ${state.meals.some((m) => m.everyday && m.items.length) ? `<button class="add-ex-btn" data-act="add-daily" style="margin-bottom:16px;">＋ Add daily meals</button>` : ""}
       ${loading ? `<div class="empty" style="margin-top:14px;">Loading…</div>` : slotsHtml}
+      ${mealSectionsManager()}
     </main>
   </div>`;
+}
+
+// The meal-section vocabulary, with add / rename / reorder / remove. Mirrors the
+// pain "Body areas" manager. Renaming keeps everything logged under the section;
+// removing moves that food to the first section (handled server-side).
+function mealSectionsManager() {
+  const m = state.mealSections;
+  const head = `<div class="section-head" style="margin-top:26px;">
+    <span class="eyebrow">Meal sections</span>
+    <button class="back-btn" data-act="msec-toggle">${m.open ? "Done" : "Manage ›"}</button>
+  </div>`;
+  if (!m.open) { return head; }
+  const slots = mealSlots();
+  const rows = slots.map((s, i) => {
+    if (m.editing === s.id) {
+      return `<div class="area-row">
+        <input class="area-input" data-act="msec-text" value="${escAttr(m.text)}" placeholder="Section name" autofocus>
+        <button class="mini-chip active" data-act="msec-save">Save</button>
+        <button class="mini-chip" data-act="msec-cancel">Cancel</button>
+      </div>`;
+    }
+    const up = i > 0 ? `<button class="mini-chip" data-act="msec-move" data-id="${s.id}" data-dir="-1" aria-label="Move up">↑</button>` : "";
+    const down = i < slots.length - 1 ? `<button class="mini-chip" data-act="msec-move" data-id="${s.id}" data-dir="1" aria-label="Move down">↓</button>` : "";
+    const del = slots.length > 1 ? `<button class="set-del" data-act="msec-del" data-id="${s.id}" aria-label="Remove section">×</button>` : "";
+    return `<div class="area-row">
+      <span class="area-name">${escAttr(s.name)}</span>
+      <span class="msec-move-wrap">${up}${down}</span>
+      <button class="mini-chip" data-act="msec-rename" data-id="${s.id}">Rename</button>
+      ${del}
+    </div>`;
+  }).join("");
+  const newHtml = m.newOpen
+    ? `<div class="area-row">
+        <input class="area-input" data-act="msec-new-text" value="${escAttr(m.newText || "")}" placeholder="New section…" autofocus>
+        <button class="mini-chip active" data-act="msec-new-add">Add</button>
+        <button class="mini-chip" data-act="msec-new-cancel">Cancel</button>
+      </div>`
+    : `<button class="add-ex-btn" data-act="msec-new" style="margin-top:10px;">＋  Add section</button>`;
+  return `${head}
+    <div class="form-hint">These are the meals your daily food is grouped under. Removing one moves its logged food to your first section.</div>
+    <div class="area-list">${rows}</div>
+    ${newHtml}`;
 }
 
 function quickField(label, field, val) {
@@ -3128,7 +3184,7 @@ function viewMealEdit() {
       </div>`
     : `<button class="add-ex-btn" data-act="meal-add-open" style="margin-top:12px;">＋ Add food</button>`;
 
-  const slotChips = NUTRI_SLOTS.map(([k, l]) => `<button class="chip ${m.slot === k ? "active" : ""}" data-act="meal-slot" data-slot="${k}">${l}</button>`).join("");
+  const slotChips = mealSlots().map((s) => `<button class="chip ${m.slot === s.id ? "active" : ""}" data-act="meal-slot" data-slot="${s.id}">${escAttr(s.name)}</button>`).join("");
   const everydayBlock = `<div class="finish-block" style="margin-top:18px;">
     <div class="chip-row"><button class="chip ${m.everyday ? "active" : ""}" data-act="meal-everyday">${m.everyday ? "★ Every day" : "☆ Every day"}</button></div>
     ${m.everyday ? `<div class="eyebrow" style="margin:12px 2px 8px;">Default meal</div><div class="chip-row">${slotChips}</div>` : ""}
@@ -3158,7 +3214,7 @@ function entryEditSheet() {
   if (!e) { return ""; }
   const x = entryTotals(e);
   const isFood = e.grams != null;
-  const slotSeg = NUTRI_SLOTS.map(([k, l]) => `<button class="seg-btn ${e.slot === k ? "active" : ""}" data-act="entry-slot" data-slot="${k}">${l}</button>`).join("");
+  const slotSeg = mealSlots().map((s) => `<button class="seg-btn ${e.slot === s.id ? "active" : ""}" data-act="entry-slot" data-slot="${s.id}">${escAttr(s.name)}</button>`).join("");
   const f = (label, k) => `<div class="step-grp narrow"><span class="lbl">${label}</span>
     <input class="step-val tnum" type="number" inputmode="decimal" value="${e[k] == null ? "" : e[k]}" data-act="entry-field" data-field="${k}" aria-label="${label}"></div>`;
   // Food entries adjust by grams (macros computed); quick-add entries edit macros directly.
@@ -3562,6 +3618,76 @@ function applyPainRename(from, to) {
       delete a.pains[from];
     }
     save();
+  }
+}
+
+/* ---- Meal sections manager ---- */
+function toggleMealSections() {
+  const m = state.mealSections;
+  m.open = !m.open; m.editing = null; m.text = ""; m.newOpen = false; m.newText = "";
+  render();
+}
+function startRenameMealSection(id) {
+  const s = mealSlots().find((x) => x.id === id);
+  state.mealSections.editing = id; state.mealSections.text = s ? s.name : ""; render();
+}
+function cancelMealSectionEdit() { state.mealSections.editing = null; state.mealSections.text = ""; render(); }
+async function saveMealSectionRename() {
+  const m = state.mealSections;
+  const id = m.editing;
+  const to = (m.text || "").trim();
+  m.editing = null; m.text = "";
+  const s = state.mealSlots.find((x) => x.id === id);
+  if (!id || !to || !s || to === s.name) { render(); return; }
+  s.name = to; // optimistic
+  render();
+  try {
+    await apiPut("/api/meal-slots", { id, name: to });
+    toast(`Renamed to ${to} ✓`);
+  } catch (e) { toast("Couldn't rename — pull down to refresh"); }
+}
+async function addMealSection() {
+  const m = state.mealSections;
+  const name = (m.newText || "").trim();
+  if (!name) { m.newOpen = false; render(); return; }
+  m.newOpen = false; m.newText = "";
+  render();
+  try {
+    const slot = await apiPost("/api/meal-slots", { name });
+    state.mealSlots = [...state.mealSlots, slot];
+    render();
+    toast("Section added ✓");
+  } catch (e) { toast("Couldn't add section"); }
+}
+async function moveMealSection(id, dir) {
+  const ids = mealSlots().map((s) => s.id);
+  const i = ids.indexOf(id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) { return; }
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  // Reorder state.mealSlots to match, optimistically.
+  state.mealSlots = ids.map((sid) => state.mealSlots.find((s) => s.id === sid)).filter(Boolean);
+  render();
+  try {
+    const res = await apiPut("/api/meal-slots", { order: ids });
+    if (res && res.slots) { state.mealSlots = res.slots; render(); }
+  } catch (e) { toast("Couldn't reorder"); }
+}
+async function deleteMealSection(id) {
+  const gone = state.mealSlots.find((s) => s.id === id);
+  state.mealSlots = state.mealSlots.filter((s) => s.id !== id);
+  if (state.mealSections.editing === id) { state.mealSections.editing = null; }
+  render();
+  try {
+    const res = await apiDelete("/api/meal-slots", { id });
+    if (res && res.slots) { state.mealSlots = res.slots; }
+    // Food logged in the removed section moved to the first one — refresh the day.
+    if (state.view === "nutrition") { loadDayLog(); }
+    render();
+  } catch (e) {
+    if (gone) { state.mealSlots = [...state.mealSlots, gone].sort((a, b) => a.ord - b.ord); }
+    toast("Couldn't remove section");
+    render();
   }
 }
 
@@ -4867,7 +4993,7 @@ app.addEventListener("click", (e) => {
     case "meal-add-open": state.mealAddOpen = true; render(); break;
     case "meal-add-food": addFoodToMeal(state.foods.find((f) => f.id === t.dataset.id)); break;
     case "meal-new-food": openFoodEdit(null, "mealedit"); break;
-    case "meal-everyday": state.mealEdit.everyday = !state.mealEdit.everyday; if (state.mealEdit.everyday && !state.mealEdit.slot) { state.mealEdit.slot = "breakfast"; } render(); break;
+    case "meal-everyday": state.mealEdit.everyday = !state.mealEdit.everyday; if (state.mealEdit.everyday && !state.mealEdit.slot) { state.mealEdit.slot = firstSlotId(); } render(); break;
     case "meal-slot": state.mealEdit.slot = t.dataset.slot; render(); break;
     case "add-daily": addDailyMeals(); break;
     case "food-img-pick": { const el = document.getElementById("food-img-file"); if (el) { el.click(); } break; }
@@ -4934,6 +5060,27 @@ app.addEventListener("click", (e) => {
     }
 
     /* ---- Body areas (the pain vocabulary) ---- */
+    case "msec-toggle": toggleMealSections(); break;
+    case "msec-rename": startRenameMealSection(t.dataset.id); break;
+    case "msec-save": saveMealSectionRename(); break;
+    case "msec-cancel": cancelMealSectionEdit(); break;
+    case "msec-move": moveMealSection(t.dataset.id, Number(t.dataset.dir)); break;
+    case "msec-new": state.mealSections.newOpen = true; state.mealSections.newText = ""; render(); break;
+    case "msec-new-cancel": state.mealSections.newOpen = false; state.mealSections.newText = ""; render(); break;
+    case "msec-new-add": addMealSection(); break;
+    case "msec-del": {
+      const id = t.dataset.id;
+      const s = mealSlots().find((x) => x.id === id);
+      state.confirm = {
+        title: `Remove "${s ? s.name : "section"}"?`,
+        body: "Any food logged in it moves to your first section. This can't be undone.",
+        ok: "Remove",
+        danger: true,
+        onOk: () => deleteMealSection(id),
+      };
+      render();
+      break;
+    }
     case "pain-areas-toggle": togglePainAreas(); break;
     case "pain-area-rename": startRenamePainArea(t.dataset.cat); break;
     case "pain-area-save": savePainAreaRename(); break;
@@ -4991,6 +5138,8 @@ app.addEventListener("keydown", (e) => {
   if (t.dataset.act === "chat-input") { e.preventDefault(); sendChat(); }
   // Renaming a body area: Enter commits, same as tapping Save.
   else if (t.dataset.act === "pain-area-text") { e.preventDefault(); savePainAreaRename(); }
+  else if (t.dataset.act === "msec-text") { e.preventDefault(); saveMealSectionRename(); }
+  else if (t.dataset.act === "msec-new-text") { e.preventDefault(); addMealSection(); }
 });
 
 app.addEventListener("input", (e) => {
@@ -5066,6 +5215,8 @@ app.addEventListener("input", (e) => {
   else if (act === "painnote-note-text") { state.painNoteEdit.note = t.value; }
   else if (act === "pain-new-text") { state.painNoteEdit.newText = t.value; }
   else if (act === "pain-area-text") { state.painAreas.text = t.value; }
+  else if (act === "msec-text") { state.mealSections.text = t.value; }
+  else if (act === "msec-new-text") { state.mealSections.newText = t.value; }
   else if (act === "rem-time" && t.value) { setReminderTime(t.dataset.id, t.value); }
   else if (act === "wdate" && t.value) {
     const [y, m, d] = t.value.split("-").map(Number);
@@ -5153,6 +5304,7 @@ async function boot() {
     state.goals = data.goals || [];
     state.foods = data.foods || [];
     state.meals = data.meals || [];
+    state.mealSlots = data.mealSlots || [];
     state.profile = data.profile || state.profile;
     if (!state.profile.targets) { state.profile.targets = { kcal: null, protein: null, carbs: null, fat: null }; }
     state.bodyWeights = data.bodyWeights || [];

@@ -455,7 +455,19 @@ const migrations: Array<(d: Database.Database) => void> = [
 		d.exec(`ALTER TABLE goal ADD COLUMN exercise_id TEXT;
 		ALTER TABLE goal ADD COLUMN target_value REAL;
 		ALTER TABLE goal ADD COLUMN reps INTEGER;
-		ALTER TABLE goal ADD COLUMN equipment TEXT`)
+		ALTER TABLE goal ADD COLUMN equipment TEXT`),
+
+	// vN -> vN+1: user-configurable meal sections. The daily diary's slots used to
+	// be a fixed Breakfast/Lunch/Dinner/Snacks; now they're an editable, ordered
+	// list. `id` is a stable slug that food_log.slot / meal.slot reference, so
+	// existing rows (whose slot is exactly one of these slugs) carry over once the
+	// four defaults are seeded (see seed()). Renaming changes only `name`.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS meal_slot (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			ord INTEGER NOT NULL DEFAULT 0
+		)`)
 ];
 
 function migrate() {
@@ -491,6 +503,19 @@ function seed() {
 		for (const name of SEED_PAIN_CATEGORIES) {
 			insPain.run(name);
 		}
+	}
+	const slotCount = (db.prepare('SELECT COUNT(*) AS n FROM meal_slot').get() as { n: number }).n;
+	if (slotCount === 0) {
+		// Slugs match the values food_log.slot / meal.slot already hold, so existing
+		// diary entries stay attached to the right (now editable) section.
+		const insSlot = db.prepare('INSERT OR IGNORE INTO meal_slot (id, name, ord) VALUES (?, ?, ?)');
+		const defaults = [
+			['breakfast', 'Breakfast'],
+			['lunch', 'Lunch'],
+			['dinner', 'Dinner'],
+			['snack', 'Snacks']
+		];
+		defaults.forEach(([id, name], i) => insSlot.run(id, name, i));
 	}
 	const mgCount = (db.prepare('SELECT COUNT(*) AS n FROM muscle_group').get() as { n: number }).n;
 	if (mgCount === 0) {
@@ -1294,6 +1319,58 @@ export function deleteMeal(id: string) {
 	db.prepare('DELETE FROM meal WHERE id = ?').run(id);
 }
 
+/* ---- Nutrition: meal sections (the daily diary's editable, ordered slots) ---- */
+export function getMealSlots() {
+	return db
+		.prepare('SELECT id, name, ord FROM meal_slot ORDER BY ord, name')
+		.all() as { id: string; name: string; ord: number }[];
+}
+
+// A URL-safe, unique slug from a display name (falls back to a random id when the
+// name has no usable characters). Used as the stable key food_log rows reference.
+function slugForSlot(name: string): string {
+	const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+	let slug = base || `slot-${uid().slice(0, 6)}`;
+	let n = 2;
+	while (db.prepare('SELECT 1 FROM meal_slot WHERE id = ?').get(slug)) {
+		slug = `${base || 'slot'}-${n++}`;
+	}
+	return slug;
+}
+
+export function createMealSlot(name: string) {
+	const id = slugForSlot(name);
+	const ord = (db.prepare('SELECT COALESCE(MAX(ord), -1) AS m FROM meal_slot').get() as { m: number }).m + 1;
+	db.prepare('INSERT INTO meal_slot (id, name, ord) VALUES (?, ?, ?)').run(id, name, ord);
+	return { id, name, ord };
+}
+
+export function renameMealSlot(id: string, name: string) {
+	const info = db.prepare('UPDATE meal_slot SET name = ? WHERE id = ?').run(name, id);
+	return info.changes ? { id, name } : null;
+}
+
+export const reorderMealSlots = db.transaction((ids: string[]) => {
+	const upd = db.prepare('UPDATE meal_slot SET ord = ? WHERE id = ?');
+	ids.forEach((id, i) => upd.run(i, id));
+	return getMealSlots();
+});
+
+// Delete a section. Refuses to remove the last one (the diary needs somewhere to
+// log food). Any food already logged into it — on any day — plus meals that
+// defaulted to it are repointed to the first remaining section, so nothing is lost.
+export const deleteMealSlot = db.transaction((id: string) => {
+	const remaining = getMealSlots().filter((s) => s.id !== id);
+	if (!remaining.length) {
+		return { ok: false, reason: 'last' as const };
+	}
+	const fallback = remaining[0].id;
+	db.prepare('UPDATE food_log SET slot = ? WHERE slot = ?').run(fallback, id);
+	db.prepare('UPDATE meal SET slot = ? WHERE slot = ?').run(fallback, id);
+	db.prepare('DELETE FROM meal_slot WHERE id = ?').run(id);
+	return { ok: true as const, movedTo: fallback };
+});
+
 /* ---- Nutrition: daily diary ---- */
 export function getFoodLog(day: string) {
 	return db
@@ -1355,6 +1432,7 @@ export function getAllData() {
 		goals: getGoals(),
 		foods: getFoods(),
 		meals: getMeals(),
+		mealSlots: getMealSlots(),
 		profile: getProfile(),
 		bodyWeights: getBodyWeights(),
 		albums: getAlbums(),
