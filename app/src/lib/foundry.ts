@@ -5607,6 +5607,10 @@ function anyOverlay() {
 document.addEventListener("touchstart", (e) => {
   if (e.touches.length !== 1 || drag || anyOverlay()) { ptr = null; return; }
   if (e.target.closest("[data-drag]")) { ptr = null; return; }        // exercise reorder
+  // The chat scrolls in its own container, so window.scrollY stays 0 there —
+  // scrolling up to read history would otherwise trigger a pull-to-refresh, and
+  // a reload drops the (ephemeral) chat view back to Home. PTR is unwanted here.
+  if (e.target.closest(".chat-scroll")) { ptr = null; return; }
   if ((window.scrollY || document.documentElement.scrollTop || 0) > 0) { ptr = null; return; }
   ptr = { y0: e.touches[0].clientY, pull: 0, active: false };
 }, { passive: true });
