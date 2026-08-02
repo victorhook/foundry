@@ -3925,13 +3925,13 @@ function viewPain() {
   }).join("");
   const body = list.length
     ? `<div class="note-list">${cards}</div>`
-    : `<div class="empty">No pain logged yet. Tap below to record how a body part feels — you can do this anytime.</div>`;
+    : `<div class="empty">No pain logged yet. Tap above to record how a body part feels — you can do this anytime.</div>`;
   return `<div class="app">
     ${header({ back: true, backLabel: "Home" })}
     <main>
       <div class="section-head"><span class="eyebrow">Pain log</span></div>
+      <button class="add-ex-btn" data-act="new-painnote" style="margin-bottom:14px;">＋  Log pain</button>
       ${body}
-      <button class="add-ex-btn" data-act="new-painnote" style="margin-top:14px;">＋  Log pain</button>
       ${painAreasSection()}
       ${remindersSection()}
     </main>
