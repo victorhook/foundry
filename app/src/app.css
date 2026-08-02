@@ -912,7 +912,7 @@
   .drawer-head { padding: 6px 12px 16px; color: var(--muted-2); }
   .menu-item {
     display: flex; align-items: center; gap: 14px; width: 100%;
-    padding: 15px 12px; border-radius: 12px;
+    padding: 10px 12px; border-radius: 12px;
     font-weight: 600; font-size: 1.02rem; color: var(--text); text-align: left;
   }
   .menu-item:active { background: var(--surface-2); }
