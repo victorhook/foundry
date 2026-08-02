@@ -464,3 +464,44 @@ describe('programs', () => {
 		expect((res as any).result.structuredContent.document.type).toBe('unavailable');
 	});
 });
+
+describe('memory tools', () => {
+	function memSources(initial = ''): McpSources {
+		let store = initial;
+		return { ...sources, memory: () => store, saveMemory: (c: string) => { store = c; } };
+	}
+	const callWith = (s: McpSources, name: string, args: Record<string, any> = {}) =>
+		handleRpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, s).then(
+			(res) => (res as any).result as { structuredContent?: any; isError?: boolean; content: Array<{ text: string }> }
+		);
+
+	it('get_memory reads the current doc', async () => {
+		const s = memSources('Rehabbing left knee.');
+		expect((await callWith(s, 'get_memory')).structuredContent.content).toBe('Rehabbing left knee.');
+	});
+
+	it('save_memory overwrites, and get_memory reads it back', async () => {
+		const s = memSources('old');
+		const saved = await callWith(s, 'save_memory', { content: 'Prefers short answers. Goal: 100kg bench.' });
+		expect(saved.structuredContent.ok).toBe(true);
+		expect((await callWith(s, 'get_memory')).structuredContent.content).toBe('Prefers short answers. Goal: 100kg bench.');
+	});
+
+	it('save_memory can clear memory with an empty string', async () => {
+		const s = memSources('remember this');
+		await callWith(s, 'save_memory', { content: '' });
+		expect((await callWith(s, 'get_memory')).structuredContent.content).toBe('');
+	});
+
+	it('rejects an over-long memory', async () => {
+		const s = memSources();
+		const r = await callWith(s, 'save_memory', { content: 'x'.repeat(20001) });
+		expect(r.isError).toBe(true);
+	});
+
+	it('reports gracefully when saving is not available (read-only connection)', async () => {
+		const r = await call('save_memory', { content: 'nope' });
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).toContain('not available');
+	});
+});

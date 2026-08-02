@@ -65,6 +65,14 @@ export type McpSources = {
 	 * itself is unreadable, which is what the unit tests exercise.
 	 */
 	programDocument?: (filename: string, mime: string | null) => Promise<ProgramDocument | null>;
+	/**
+	 * The AI chat agent's cross-chat memory. `memory` reads the current doc;
+	 * `saveMemory` replaces it. Optional so the read-only automation surface (and
+	 * the unit-test sources) can omit them — the memory tools then report that
+	 * saving isn't available here rather than throwing at the transport.
+	 */
+	memory?: () => string;
+	saveMemory?: (content: string) => void;
 };
 
 /** An MCP content block a tool wants returned alongside its JSON. */
@@ -812,6 +820,43 @@ const getProgram: Tool = {
 	}
 };
 
+const getMemory: Tool = {
+	name: 'get_memory',
+	title: 'Read memory',
+	description:
+		'Read your durable cross-chat memory about the owner — what you have chosen to remember across conversations (injuries and limitations, how they like you to respond, standing goals, equipment, schedule). It is also given to you at the start of each chat, so you rarely need to call this; use it to double-check the exact current text before rewriting it with save_memory.',
+	inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+	run: (_args, s) => {
+		return { content: s.memory ? s.memory() : '' };
+	}
+};
+
+const saveMemory: Tool = {
+	name: 'save_memory',
+	title: 'Save memory',
+	description:
+		'Replace your durable cross-chat memory about the owner with `content`. Pass the FULL updated doc (it overwrites, it does not append): keep it concise, deduplicated, and current — merge new facts in and drop anything obsolete. Save only durable, useful things (an injury or limitation, a lasting preference for how you respond, a standing goal, their equipment or schedule) — not one-off calculations, transient questions, or anything they would not want you to bring up in a future chat. Pass an empty string to forget everything.',
+	inputSchema: {
+		type: 'object',
+		properties: {
+			content: { type: 'string', description: 'The full memory doc to store (markdown). Overwrites the previous one.' }
+		},
+		required: ['content'],
+		additionalProperties: false
+	},
+	run: (args, s) => {
+		if (!s.saveMemory) {
+			throw new ToolError('Saving memory is not available on this connection.');
+		}
+		const content = String(args.content ?? '');
+		if (content.length > 20000) {
+			throw new ToolError('Memory is too long (max 20000 characters) — keep it concise.');
+		}
+		s.saveMemory(content);
+		return { ok: true, savedChars: content.length };
+	}
+};
+
 export const TOOLS: Tool[] = [
 	getOverview,
 	listWorkouts,
@@ -826,7 +871,9 @@ export const TOOLS: Tool[] = [
 	getGoals,
 	listTemplates,
 	listPrograms,
-	getProgram
+	getProgram,
+	getMemory,
+	saveMemory
 ];
 
 /* ----------------------------------------------------------------- protocol */

@@ -11,7 +11,9 @@ import {
 	getStepDays,
 	getFoodLog,
 	getTemplates,
-	getPrograms
+	getPrograms,
+	getAgentMemory,
+	setAgentMemory
 } from '$lib/server/db';
 import { readProgramDocument } from '$lib/server/documents';
 import { handleMessage, RPC_ERRORS, SUPPORTED_VERSIONS, type McpSources } from '$lib/server/mcp';
@@ -43,7 +45,11 @@ function sources(): McpSources {
 		programs: getPrograms,
 		// The only tool that touches the filesystem: program documents live as
 		// uploads next to the database, not in it.
-		programDocument: readProgramDocument
+		programDocument: readProgramDocument,
+		// The chat agent's own cross-chat memory — the one writable surface here,
+		// and only its coaching notes, never the owner's logged data.
+		memory: getAgentMemory,
+		saveMemory: setAgentMemory
 	};
 }
 

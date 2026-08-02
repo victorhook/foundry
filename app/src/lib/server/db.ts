@@ -467,6 +467,17 @@ const migrations: Array<(d: Database.Database) => void> = [
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			ord INTEGER NOT NULL DEFAULT 0
+		)`),
+
+	// vN -> vN+1: the AI chat agent's cross-chat memory — one row holding a small
+	// markdown doc the agent curates (durable facts about the owner: injuries,
+	// preferences, goals). Injected into every chat's system prompt, so a fresh
+	// chat starts already knowing the owner; the agent updates it via save_memory.
+	(d) =>
+		d.exec(`CREATE TABLE IF NOT EXISTS agent_memory (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			content TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL DEFAULT 0
 		)`)
 ];
 
@@ -1371,6 +1382,21 @@ export const deleteMealSlot = db.transaction((id: string) => {
 	return { ok: true as const, movedTo: fallback };
 });
 
+/* ---- AI chat: the agent's cross-chat memory (one curated markdown doc) ---- */
+export function getAgentMemory(): string {
+	const r = db.prepare('SELECT content FROM agent_memory WHERE id = 1').get() as
+		| { content: string }
+		| undefined;
+	return r ? r.content : '';
+}
+
+export function setAgentMemory(content: string): void {
+	db.prepare(
+		`INSERT INTO agent_memory (id, content, updated_at) VALUES (1, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`
+	).run(content, Date.now());
+}
+
 /* ---- Nutrition: daily diary ---- */
 export function getFoodLog(day: string) {
 	return db
@@ -1433,6 +1459,7 @@ export function getAllData() {
 		foods: getFoods(),
 		meals: getMeals(),
 		mealSlots: getMealSlots(),
+		agentMemory: getAgentMemory(),
 		profile: getProfile(),
 		bodyWeights: getBodyWeights(),
 		albums: getAlbums(),

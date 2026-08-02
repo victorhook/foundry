@@ -98,6 +98,9 @@ function load() {
     mealSlots: [],
     // Ephemeral UI for the "Meal sections" manager on the nutrition screen.
     mealSections: { open: false, editing: null, text: "", newOpen: false, newText: "" },
+    // The AI chat agent's cross-chat memory + the editor overlay (null = closed).
+    agentMemory: "",
+    memoryEdit: null,
     profile: { dob: null, height: null, gender: null, targets: { kcal: null, protein: null, carbs: null, fat: null } },
     bodyWeights: [],
     albums: [],
@@ -1172,7 +1175,7 @@ function confirmModal() {
 // Global overlays layered on top of whatever view is showing. (The nav drawer is
 // a persistent element on <body>, managed outside render() for smooth gestures.)
 function overlays() {
-  return confirmModal() + entryEditSheet() + targetsSheet();
+  return confirmModal() + entryEditSheet() + targetsSheet() + memorySheet();
 }
 
 /* ---- Home ---- */
@@ -4377,8 +4380,65 @@ function viewChats() {
       <div class="section-head"><span class="eyebrow">AI chat</span></div>
       ${body}
       <button class="add-ex-btn" data-act="new-chat" style="margin-top:14px;">＋  New chat</button>
+      ${state.chatAvailable ? memorySection() : ""}
     </main>
   </div>`;
+}
+
+// What the assistant remembers about the owner across every chat. It curates this
+// itself (via save_memory); this panel is for transparency + manual edits.
+function memorySection() {
+  const mem = (state.agentMemory || "").trim();
+  const preview = mem
+    ? `<div class="note-card" data-act="memory-open"><div class="note-text" style="white-space:pre-wrap;">${escAttr(mem.length > 400 ? mem.slice(0, 400) + "…" : mem)}</div></div>`
+    : `<div class="empty">Nothing yet — the assistant will remember durable things (injuries, goals, how you like it to answer) as you chat, and use them in every new conversation.</div>`;
+  return `<div class="section-head" style="margin-top:26px;">
+      <span class="eyebrow">🧠 Memory</span>
+      <button class="back-btn" data-act="memory-open">Edit ›</button>
+    </div>
+    <div class="form-hint">Carried into every chat, so a new conversation already knows you. The assistant updates it on its own; edit or clear it here anytime.</div>
+    ${preview}`;
+}
+
+function memorySheet() {
+  const m = state.memoryEdit;
+  if (m == null) { return ""; }
+  return `<div class="sheet-wrap" data-act="close-memory">
+    <div class="sheet" data-act="noop">
+      <div class="eyebrow" style="margin-bottom:6px;">🧠 What the assistant remembers</div>
+      <div class="form-hint" style="margin-top:0;">Plain notes about you, shared across all chats. The assistant rewrites this itself; your edits here are the source of truth until it next updates it.</div>
+      <textarea class="notes" data-act="memory-text" rows="8" placeholder="e.g. Rehabbing left knee — avoid heavy squats. Prefers short answers. Goal: 100kg bench by spring." style="width:100%;">${escAttr(m.text)}</textarea>
+      <div class="sheet-actions">
+        <button class="btn btn-ghost" data-act="memory-clear">Clear all</button>
+        <button class="btn btn-primary" data-act="memory-save">Save</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Open the editor with what we have, then refresh from the server — the agent may
+// have updated memory during recent chats, so the local copy can be stale.
+async function openMemoryEditor() {
+  state.memoryEdit = { text: state.agentMemory || "" };
+  render();
+  try {
+    const r = await apiGet("/api/agent-memory");
+    state.agentMemory = r.content || "";
+    if (state.memoryEdit) { state.memoryEdit.text = r.content || ""; render(); }
+  } catch (e) { /* keep the optimistic copy */ }
+}
+async function saveMemoryEdit() {
+  const m = state.memoryEdit;
+  if (!m) { return; }
+  const content = m.text || "";
+  state.memoryEdit = null;
+  render();
+  try {
+    const r = await apiPut("/api/agent-memory", { content });
+    state.agentMemory = r.content != null ? r.content : content;
+    toast("Memory saved ✓");
+    render();
+  } catch (e) { toast("Couldn't save memory"); }
 }
 
 function viewChat() {
@@ -4959,6 +5019,10 @@ app.addEventListener("click", (e) => {
     case "edit-targets": openTargets(); break;
     case "close-targets": state.targetEdit = null; render(); break;
     case "save-targets": saveTargetsEdit(); break;
+    case "memory-open": openMemoryEditor(); break;
+    case "close-memory": state.memoryEdit = null; render(); break;
+    case "memory-clear": if (state.memoryEdit) { state.memoryEdit.text = ""; render(); } break;
+    case "memory-save": saveMemoryEdit(); break;
     case "add-food":
       state.addFood = { slot: t.dataset.slot, mode: "foods", q: "", quick: { name: "", kcal: "", protein: "", carbs: "", fat: "" } };
       go("addfood");
@@ -5217,6 +5281,7 @@ app.addEventListener("input", (e) => {
   else if (act === "pain-area-text") { state.painAreas.text = t.value; }
   else if (act === "msec-text") { state.mealSections.text = t.value; }
   else if (act === "msec-new-text") { state.mealSections.newText = t.value; }
+  else if (act === "memory-text") { if (state.memoryEdit) { state.memoryEdit.text = t.value; } }
   else if (act === "rem-time" && t.value) { setReminderTime(t.dataset.id, t.value); }
   else if (act === "wdate" && t.value) {
     const [y, m, d] = t.value.split("-").map(Number);
@@ -5305,6 +5370,7 @@ async function boot() {
     state.foods = data.foods || [];
     state.meals = data.meals || [];
     state.mealSlots = data.mealSlots || [];
+    state.agentMemory = data.agentMemory || "";
     state.profile = data.profile || state.profile;
     if (!state.profile.targets) { state.profile.targets = { kcal: null, protein: null, carbs: null, fat: null }; }
     state.bodyWeights = data.bodyWeights || [];

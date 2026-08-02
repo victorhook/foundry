@@ -234,7 +234,32 @@ function toolingLine(): string {
 	return missing.length ? `${head} ${missing.join(' and ')} is NOT installed — do not try it.` : head;
 }
 
-function systemPrompt(snapshot: string | null, mcp: boolean): string {
+function memoryLines(memory: string | null | undefined, mcp: boolean): string[] {
+	const text = (memory || '').trim();
+	const lines = [
+		'',
+		'You keep a short MEMORY about the owner that persists across ALL chats — this',
+		'is how you remember them between separate conversations. What you currently',
+		'remember:',
+		text ? text : '(nothing yet)',
+		''
+	];
+	if (mcp) {
+		lines.push(
+			'Use it: it may hold their goals, injuries or limitations, equipment, or how',
+			'they like you to respond. When you learn a durable, useful fact about them —',
+			'a lasting injury or limitation, a standing goal, equipment they have, a clear',
+			'preference for how you answer — call the `save_memory` tool with the FULL',
+			'rewritten memory (it overwrites): merge the new fact in, keep it concise and',
+			'deduplicated, and drop anything obsolete. Do NOT store one-off calculations,',
+			'transient questions, or anything they would not want you to raise in a future',
+			'chat. Update memory quietly as part of answering; only mention it if they ask.'
+		);
+	}
+	return lines;
+}
+
+function systemPrompt(snapshot: string | null, mcp: boolean, memory?: string | null): string {
 	const lines = [
 		'You are the assistant built into Foundry, a personal fitness-tracking web app.',
 		'You are talking to the app owner through a chat page on their phone, so keep',
@@ -268,6 +293,8 @@ function systemPrompt(snapshot: string | null, mcp: boolean): string {
 			'and `get_program`. Use them for anything about their training, food,',
 			'weight, pain or progress — they query live data and take the arguments you',
 			'need (date ranges, exercise names).',
+			'`get_memory` and `save_memory` read and update what you remember about the',
+			'owner across chats (see the memory note below).',
 			'`get_overview` first if you are unsure what exists or over what period.',
 			'',
 			'`list_programs` and `get_program` cover the plans they have uploaded — a',
@@ -308,6 +335,7 @@ function systemPrompt(snapshot: string | null, mcp: boolean): string {
 			'the owner\'s training or nutrition — say so rather than guessing.'
 		);
 	}
+	lines.push(...memoryLines(memory, mcp));
 	return lines.join(' ');
 }
 
@@ -465,7 +493,8 @@ function buildArgs(
 	prompt: string,
 	resume: string | null,
 	snapshot: string | null,
-	mcpConfig: string | null
+	mcpConfig: string | null,
+	memory: string | null
 ): string[] {
 	const args = [
 		'-p',
@@ -478,7 +507,7 @@ function buildArgs(
 		'acceptEdits',
 		...(mcpConfig ? ['--disallowed-tools', ...DISALLOW_MCP] : ['--tools', ...TOOLS_FILE]),
 		'--append-system-prompt',
-		systemPrompt(snapshot, !!mcpConfig),
+		systemPrompt(snapshot, !!mcpConfig, memory),
 		'--settings',
 		JSON.stringify({ permissions: { allow: ALLOW, deny: denyRules() } })
 	];
@@ -589,11 +618,13 @@ export async function* runTurn(opts: {
 	port?: string;
 	/** Whether the caller confirmed the MCP endpoint is answering. */
 	mcp?: boolean;
+	/** The agent's cross-chat memory, injected into the system prompt. */
+	memory?: string | null;
 }): AsyncGenerator<ClaudeEvent> {
 	fs.mkdirSync(WORKSPACE, { recursive: true });
 
 	const mcpConfig = opts.mcp ? mcpConfigPath(opts.port) : null;
-	const child = spawn(BIN, buildArgs(opts.prompt, opts.resume, opts.snapshot ?? null, mcpConfig), {
+	const child = spawn(BIN, buildArgs(opts.prompt, opts.resume, opts.snapshot ?? null, mcpConfig, opts.memory ?? null), {
 		cwd: WORKSPACE,
 		env: childEnv(),
 		stdio: ['ignore', 'pipe', 'pipe']
