@@ -1768,8 +1768,8 @@ function pickerExercises() {
 
 function pickerItemHtml(e) {
   const thumb = e.image
-    ? `<img class="p-thumb" src="/api/file/${e.image}" loading="lazy" alt="">`
-    : `<span class="p-thumb p-thumb-empty">\u{1F3CB}️</span>`;
+    ? `<img class="p-thumb ex-thumb" src="/api/file/${e.image}" loading="lazy" alt="">`
+    : `<span class="p-thumb ex-thumb p-thumb-empty">\u{1F3CB}️</span>`;
   const count = (state.picker.added || []).filter((x) => x === e.id).length;
   const add = count ? `✓${count > 1 ? " " + count : ""}` : "+";
   return `<button class="ex-pick${count ? " added" : ""}" data-act="pick" data-id="${e.id}">
@@ -1896,8 +1896,8 @@ function registerExercises() {
 
 function registerItemHtml(e) {
   const thumb = e.image
-    ? `<img class="p-thumb" src="/api/file/${e.image}" loading="lazy" alt="">`
-    : `<span class="p-thumb p-thumb-empty">\u{1F3CB}️</span>`;
+    ? `<img class="p-thumb ex-thumb" src="/api/file/${e.image}" loading="lazy" alt="">`
+    : `<span class="p-thumb ex-thumb p-thumb-empty">\u{1F3CB}️</span>`;
   const st = exStats(e.id);
   // Trained ones get the "cool" highlight; never-done stays muted so the list
   // doesn't read as all-green.
