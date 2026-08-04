@@ -118,6 +118,8 @@ function load() {
     detailId: draft.detailId || null,
     albumId: draft.albumId || null,
     nutritionDay: draft.nutritionDay || null,
+    // Profile: which history lists are unfolded (the charts always show).
+    profFold: draft.profFold || { weight: false, steps: false },
     dayLog: null,
     photoTag: null,
     loaded: false,
@@ -206,6 +208,7 @@ function save() {
       detailId: state.detailId,
       albumId: state.albumId,
       nutritionDay: state.nutritionDay,
+      profFold: state.profFold,
     }));
   } catch (e) { /* storage full / unavailable */ }
 }
@@ -1114,7 +1117,7 @@ function render() {
     app.firstElementChild.classList.add("view-enter");
     prevView = state.view;
   }
-  if (state.view === "profile") { drawWeightChart(); }
+  if (state.view === "profile") { drawWeightChart(); drawStepsChart(); }
   if (state.view === "program") { renderProgramPdf(); }
   if (state.view === "chat") { chatAfterRender(); }
   sizeNotes(); // expand any prefilled note fields to fit their content
@@ -2169,6 +2172,37 @@ function latestWeight() {
   const w = state.bodyWeights;
   return w.length ? w[w.length - 1].weight : null;
 }
+// Change over the last `days` days: latest minus the earliest weigh-in still
+// inside the window. Needs two points in there to mean anything.
+function weightChange(days) {
+  const since = Date.now() - days * 86400000;
+  const inWindow = state.bodyWeights.filter((w) => w.at >= since);
+  if (inWindow.length < 2) { return null; }
+  return inWindow[inWindow.length - 1].weight - inWindow[0].weight;
+}
+function bmi() {
+  const w = latestWeight(), h = state.profile.height;
+  if (!w || !h) { return null; }
+  return w / ((h / 100) * (h / 100));
+}
+function signed(n, digits) {
+  const v = round1(n);
+  return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(digits == null ? 1 : digits);
+}
+
+// A collapsible list head: label + count on the left, caret on the right.
+// The charts above stay visible — only the row-by-row history folds away.
+function foldHead(act, label, count, open) {
+  return `<button class="fold-head" data-act="${act}" aria-expanded="${open ? "true" : "false"}">
+    <span class="eyebrow">${escAttr(label)}${count != null ? ` · ${count}` : ""}</span>
+    <span class="fold-caret${open ? " open" : ""}">›</span>
+  </button>`;
+}
+function toggleFold(key) {
+  state.profFold[key] = !state.profFold[key];
+  save();
+  render();
+}
 function persistProfile() { apiPost("/api/profile", state.profile).catch(() => {}); }
 
 function setGender(g) { state.profile.gender = g; persistProfile(); render(); }
@@ -2259,6 +2293,24 @@ function disconnectFit() {
   toast("Google Fit disconnected");
 }
 
+// The last `n` calendar days ending today, oldest first. A day that never synced
+// reads as 0 — on a bar chart an absent day and a still day look the same anyway.
+function stepSeries(n) {
+  const now = new Date();
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i, 12);
+    const key = dateInputValue(d.getTime());
+    const row = state.steps.find((s) => s.day === key);
+    out.push({ at: d.getTime(), day: key, steps: row ? row.steps : 0 });
+  }
+  return out;
+}
+// Short form for chart labels: 12,480 → "12.4k".
+function fmtSteps(n) {
+  return n >= 10000 ? round1(n / 1000).toFixed(1) + "k" : Math.round(n).toLocaleString();
+}
+
 function fitSection() {
   if (!state.fitConnected) {
     return `<div class="section-head" style="margin-top:8px;"><span class="eyebrow">Steps</span></div>
@@ -2268,8 +2320,12 @@ function fitSection() {
       </div>`;
   }
   const today = todaySteps();
-  const recent = state.steps.slice(-7).reverse();
-  const rows = recent.map((s) => {
+  // Averages skip today: a day in progress would drag every comparison down.
+  const done = stepSeries(8).slice(0, -1);
+  const avg7 = done.length ? Math.round(done.reduce((s, d) => s + d.steps, 0) / done.length) : null;
+  const best = state.steps.slice(-30).reduce((m, s) => Math.max(m, s.steps), 0);
+  const open = !!state.profFold.steps;
+  const rows = state.steps.slice().reverse().map((s) => {
     const [y, m, d] = s.day.split("-").map(Number);
     const label = new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     return `<div class="wrow"><span class="wrow-date">${label}</span><span class="wrow-val tnum">${s.steps.toLocaleString()}</span></div>`;
@@ -2278,12 +2334,19 @@ function fitSection() {
   return `<div class="section-head" style="margin-top:8px;"><span class="eyebrow">Steps</span></div>
     <div class="detail-stat-row">
       ${stat(today != null ? today.toLocaleString() : "–", "Today")}
+      ${stat(avg7 != null ? avg7.toLocaleString() : "–", "7-day avg")}
+      ${stat(best ? best.toLocaleString() : "–", "Best 30d")}
+    </div>
+    <div class="chart-card">
+      <canvas id="schart" class="schart"></canvas>
+      ${state.steps.length === 0 ? `<div class="chart-empty">No steps synced yet</div>` : ""}
     </div>
     <div class="weigh-add">
       <button class="chip" data-act="fit-sync" ${state.fitSyncing ? "disabled" : ""}>${state.fitSyncing ? "Syncing…" : "Sync now"}</button>
       <button class="chip" data-act="fit-disconnect">Disconnect</button>
     </div>
-    ${rows ? `<div class="wlist">${rows}</div>` : `<div class="empty">No steps synced yet.</div>`}`;
+    ${rows ? foldHead("fold-steps", "Daily history", state.steps.length, open) : ""}
+    ${rows && open ? `<div class="wlist">${rows}</div>` : ""}`;
 }
 
 function viewProfile() {
@@ -2304,15 +2367,42 @@ function viewProfile() {
     </div>`
   ).join("");
 
+  const change = weightChange(30);
+  const b = bmi();
+  const wOpen = !!state.profFold.weight;
+
   return `<div class="app">
     ${header({ back: true, backLabel: "Home" })}
     <main>
-      <div class="section-head"><span class="eyebrow">Profile</span></div>
+      <div class="section-head"><span class="eyebrow">Weight</span></div>
+
+      <div class="detail-stat-row">
+        ${stat(lw != null ? lw : "–", "Weight kg")}
+        ${stat(change != null ? signed(change) : "–", "30 days")}
+        ${stat(b != null ? round1(b).toFixed(1) : "–", "BMI")}
+      </div>
+
+      <div class="chart-card">
+        <canvas id="wchart" class="wchart"></canvas>
+        ${state.bodyWeights.length === 0 ? `<div class="chart-empty">No weigh-ins yet</div>` : ""}
+      </div>
+
+      <div class="weigh-add">
+        <input class="picker-search" style="margin:0;flex:1;" type="number" inputmode="decimal" placeholder="Weight kg" value="${escAttr(state.weighWeight || "")}" data-act="weigh-weight">
+        <input class="date-input" style="flex:0 0 auto;width:auto;" type="date" value="${state.weighDate || dateInputValue(Date.now())}" data-act="weigh-date">
+        <button class="chip" data-act="add-weigh">Add</button>
+      </div>
+
+      ${history ? foldHead("fold-weight", "Weigh-in history", state.bodyWeights.length, wOpen) : ""}
+      ${history && wOpen ? `<div class="wlist">${history}</div>` : ""}
+
+      ${fitSection()}
+
+      <div class="section-head" style="margin-top:8px;"><span class="eyebrow">About you</span></div>
 
       <div class="detail-stat-row">
         ${stat(age != null ? age : "–", "Age")}
         ${stat(p.height ? p.height : "–", "Height cm")}
-        ${stat(lw != null ? lw : "–", "Weight kg")}
       </div>
 
       <div class="finish-block">
@@ -2327,22 +2417,6 @@ function viewProfile() {
         <span class="eyebrow">Gender</span>
         <div class="chip-row">${genderChips}</div>
       </div>
-
-      <div class="section-head" style="margin-top:8px;"><span class="eyebrow">Weight over time</span></div>
-      <div class="chart-card">
-        <canvas id="wchart" class="wchart"></canvas>
-        ${state.bodyWeights.length === 0 ? `<div class="chart-empty">No weigh-ins yet</div>` : ""}
-      </div>
-
-      <div class="weigh-add">
-        <input class="picker-search" style="margin:0;flex:1;" type="number" inputmode="decimal" placeholder="Weight kg" value="${escAttr(state.weighWeight || "")}" data-act="weigh-weight">
-        <input class="date-input" style="flex:0 0 auto;width:auto;" type="date" value="${state.weighDate || dateInputValue(Date.now())}" data-act="weigh-date">
-        <button class="chip" data-act="add-weigh">Add</button>
-      </div>
-
-      ${history ? `<div class="wlist">${history}</div>` : ""}
-
-      ${fitSection()}
     </main>
   </div>`;
 }
@@ -2404,6 +2478,104 @@ function drawWeightChart() {
   ctx.textAlign = "left";
   ctx.fillText(maxY.toFixed(1), pad.l, pad.t - 3);
   ctx.fillText(minY.toFixed(1), pad.l, H - 5);
+}
+
+// A bar with a rounded top and square feet on the baseline.
+function barPath(ctx, x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h);
+  ctx.beginPath();
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x, y + rad);
+  ctx.quadraticCurveTo(x, y, x + rad, y);
+  ctx.lineTo(x + w - rad, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+  ctx.lineTo(x + w, y + h);
+  ctx.closePath();
+}
+
+const STEP_CHART_DAYS = 14;
+
+// Steps as one bar per day: magnitude over time, today in full accent and the
+// rest of the fortnight washed back, with the completed-day average as the one
+// reference line. Values live in the stat tiles above, so the chart labels only
+// its own extremes.
+function drawStepsChart() {
+  const cv = document.getElementById("schart");
+  if (!cv) { return; }
+  const data = stepSeries(STEP_CHART_DAYS);
+  const ctx = cv.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 300;
+  const H = cv.clientHeight || 150;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const max = Math.max(...data.map((d) => d.steps));
+  if (!max) { return; }   // nothing in the window — the empty overlay speaks
+
+  const pad = { l: 8, r: 8, t: 16, b: 16 };
+  const baseY = H - pad.b;
+  const plotH = baseY - pad.t;
+  const band = (W - pad.l - pad.r) / data.length;
+  const barW = Math.min(24, band - 2);   // the 2px leftover is the surface gap
+  const top = Math.ceil(max / 2000) * 2000;
+  const y = (v) => baseY - plotH * (v / top);
+
+  // Baseline: hairline, one step off the surface, recessive.
+  ctx.strokeStyle = "#333B45";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.l, baseY + 0.5);
+  ctx.lineTo(W - pad.r, baseY + 0.5);
+  ctx.stroke();
+
+  data.forEach((d, i) => {
+    if (!d.steps) { return; }
+    const x = pad.l + band * i + (band - barW) / 2;
+    const h = Math.max(3, baseY - y(d.steps));
+    barPath(ctx, x, baseY - h, barW, h, 4);
+    ctx.fillStyle = i === data.length - 1 ? "#FB7141" : "rgba(251,113,65,0.34)";
+    ctx.fill();
+  });
+
+  // Average of the completed days (today is still running).
+  const done = data.slice(0, -1);
+  const avg = done.length ? done.reduce((s, d) => s + d.steps, 0) / done.length : 0;
+  if (avg > 0) {
+    const ay = y(avg);
+    ctx.strokeStyle = "rgba(76,201,176,0.85)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, ay + 0.5);
+    ctx.lineTo(W - pad.r, ay + 0.5);
+    ctx.stroke();
+    // The label rides over the bars, so it sits on a card-coloured pill —
+    // otherwise the digits tangle with whatever bar happens to be behind them.
+    const label = `avg ${fmtSteps(avg)}`;
+    ctx.font = "600 10px -apple-system, system-ui, sans-serif";
+    const tw = ctx.measureText(label).width;
+    const ly = Math.max(11, ay - 5);
+    ctx.fillStyle = "#1C2128";
+    ctx.fillRect(W - pad.r - tw - 4, ly - 9, tw + 6, 12);
+    ctx.fillStyle = "rgba(232,235,240,0.7)";
+    ctx.textAlign = "right";
+    ctx.fillText(label, W - pad.r - 1, ly);
+  }
+
+  // Window max, top-left — the scale the bars are read against.
+  ctx.fillStyle = "rgba(232,235,240,0.5)";
+  ctx.font = "600 10px -apple-system, system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(fmtSteps(max), pad.l, 10);
+
+  // Weekday initials under every bar; today's is brought forward.
+  data.forEach((d, i) => {
+    const letter = new Date(d.at).toLocaleDateString(undefined, { weekday: "narrow" });
+    ctx.fillStyle = i === data.length - 1 ? "rgba(232,235,240,0.8)" : "rgba(138,147,162,0.7)";
+    ctx.font = "600 9px -apple-system, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(letter, pad.l + band * i + band / 2, H - 4);
+  });
 }
 
 /* ============ Photos / albums ============ */
@@ -5065,6 +5237,8 @@ app.addEventListener("click", (e) => {
       break;
     case "add-weigh": addWeighIn(); break;
     case "del-weigh": deleteWeighIn(parseInt(t.dataset.id, 10)); break;
+    case "fold-weight": toggleFold("weight"); break;
+    case "fold-steps": toggleFold("steps"); break;
     case "new-album": state.newAlbumOpen = true; render(); break;
     case "new-album-add": {
       const nm = (state.newAlbumName || "").trim();

@@ -172,17 +172,55 @@ test('notes: add a date-bound note and it persists', async ({ page }) => {
 	await expect(page.locator('.note-text', { hasText: 'Felt strong' })).toBeVisible();
 });
 
-test('profile: weigh-in persists across reload', async ({ page }) => {
+test('profile: weigh-in persists across reload, history folds', async ({ page }) => {
 	await login(page);
 	await menuNav(page, 'Profile');
 
 	await page.locator('[data-act="weigh-weight"]').fill('80.5');
 	await page.getByRole('button', { name: 'Add', exact: true }).click();
-	await expect(page.getByText('80.5 kg')).toBeVisible();
+	// Weight leads the screen; the chart shows but the row-by-row list is folded.
+	await expect(page.locator('.detail-stat-row').first()).toContainText('80.5');
+	await expect(page.locator('#wchart')).toBeVisible();
+	await expect(page.locator('.wrow-val', { hasText: '80.5 kg' })).toHaveCount(0);
 
-	// Reload — the app restores to Profile and the weigh-in comes from the DB.
+	await page.locator('[data-act="fold-weight"]').click();
+	await expect(page.locator('.wrow-val', { hasText: '80.5 kg' })).toBeVisible();
+
+	// Reload — the app restores to Profile, the weigh-in comes from the DB, and the
+	// fold stays open (it rides along in the local draft).
 	await page.reload();
-	await expect(page.getByText('80.5 kg')).toBeVisible();
+	await expect(page.locator('.wrow-val', { hasText: '80.5 kg' })).toBeVisible();
+});
+
+// Steps need a live Google Fit account, so the synced data is injected at the
+// /api/data boundary — enough to prove the chart and the fold are wired up.
+test('profile: steps chart and foldable daily history', async ({ page }) => {
+	const dayKey = (back: number) => {
+		const d = new Date();
+		d.setDate(d.getDate() - back);
+		const p = (n: number) => String(n).padStart(2, '0');
+		return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+	};
+	const steps = [9120, 4380, 12480, 7650, 15230, 3110, 8940].map((s, i) => ({
+		day: dayKey(6 - i),
+		steps: s
+	}));
+	await page.route('**/api/data', async (route) => {
+		const res = await route.fetch();
+		await route.fulfill({ json: { ...(await res.json()), fitConnected: true, steps } });
+	});
+	// boot()'s auto-sync would otherwise hit Google with no credentials.
+	await page.route('**/api/fit', (route) => route.fulfill({ json: { steps } }));
+
+	await login(page);
+	await menuNav(page, 'Profile');
+	await expect(page.locator('#schart')).toBeVisible();
+	// Stat rows in order: weight, steps, about-you.
+	await expect(page.locator('.detail-stat-row').nth(1)).toContainText('15,230'); // best of the week
+
+	await expect(page.locator('.wrow-val', { hasText: '12,480' })).toHaveCount(0);
+	await page.locator('[data-act="fold-steps"]').click();
+	await expect(page.locator('.wrow-val', { hasText: '12,480' })).toBeVisible();
 });
 
 test('tap an exercise in the summary opens its info, and Edit works', async ({ page }) => {
