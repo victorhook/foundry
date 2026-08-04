@@ -929,6 +929,39 @@ async function saveExercise() {
   else { addExerciseToActive(ex.id, { back: true }); }
 }
 
+// Everything that points at an exercise, counted from local state (the same
+// numbers the server clears) so the confirm can spell out what a delete costs.
+function exerciseUsage(id) {
+  return {
+    workouts: state.workouts.filter((w) => w.entries.some((en) => en.exerciseId === id)).length,
+    templates: state.templates.filter((t) => (t.entries || []).some((e) => e.exerciseId === id)).length,
+    goals: state.goals.filter((g) => g.exerciseId === id).length,
+  };
+}
+
+function usageSentence(u) {
+  const parts = [];
+  if (u.workouts) { parts.push(`${u.workouts} logged workout${u.workouts === 1 ? "" : "s"}`); }
+  if (u.templates) { parts.push(`${u.templates} template${u.templates === 1 ? "" : "s"}`); }
+  if (u.goals) { parts.push(`${u.goals} goal${u.goals === 1 ? "" : "s"}`); }
+  if (!parts.length) { return "Never logged — nothing else changes."; }
+  const list = parts.length > 1 ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1] : parts[0];
+  return `Also removes it from ${list}. This can't be undone.`;
+}
+
+// Remove a movement from the library. The server drops the same references, so
+// prune them locally too — a leftover id would render as "Unknown".
+function deleteExerciseById(id) {
+  apiDelete("/api/exercises", { id }).catch(() => toast("Couldn't remove exercise"));
+  state.exercises = state.exercises.filter((e) => e.id !== id);
+  state.workouts.forEach((w) => { w.entries = w.entries.filter((en) => en.exerciseId !== id); });
+  state.templates.forEach((t) => { t.entries = (t.entries || []).filter((e) => e.exerciseId !== id); });
+  state.goals = state.goals.filter((g) => g.exerciseId !== id);
+  if (state.active) { state.active.entries = state.active.entries.filter((en) => en.exerciseId !== id); }
+  save();
+  render();
+}
+
 /* ---- Calendar ---- */
 function calShift(delta) {
   let { year, month } = state.cal;
@@ -1779,6 +1812,9 @@ function viewPicker() {
 // Shared create/edit exercise form. state.picker.editingId decides the mode.
 function viewExerciseForm() {
   const editing = !!state.picker.editingId;
+  // Deleting is offered from the register only — mid-workout the form is reached
+  // to tweak an exercise you're in the middle of logging.
+  const fromRegister = state.picker.editReturn === "exercises";
   const name = state.picker.newName || "";
   const selected = state.picker.newTags || [];
   const bank = tagBank();
@@ -1820,14 +1856,16 @@ function viewExerciseForm() {
       <div class="eyebrow" style="margin:20px 2px 10px;">Image</div>
       ${state.picker.newImage
         ? `<div class="ex-img-edit">
-            <img class="ex-img-preview" src="/api/file/${state.picker.newImage}" alt="exercise">
+            <img class="ex-img-preview wide" src="/api/file/${state.picker.newImage}" alt="exercise">
             <button class="chip" data-act="ex-img-remove">Remove</button>
           </div>`
         : `<button class="add-ex-btn" data-act="ex-img-pick" ${state.picker.imageBusy ? "disabled style=opacity:0.5" : ""}>${state.picker.imageBusy ? "Uploading…" : "＋ Add image"}</button>`}
       <input type="file" accept="image/*" id="ex-img-file" data-act="ex-img-file" style="display:none">
     </main>
     <div class="footer">
-      <button class="btn btn-ghost" data-act="close-create">Back</button>
+      ${editing && fromRegister
+        ? `<button class="btn btn-ghost" data-act="del-ex-lib" data-id="${state.picker.editingId}">Delete</button>`
+        : `<button class="btn btn-ghost" data-act="close-create">Back</button>`}
       <button class="btn btn-primary" data-act="save-ex">${editing ? "Save" : "Add exercise"}</button>
     </div>
   </div>`;
@@ -5108,6 +5146,24 @@ app.addEventListener("click", (e) => {
     case "reg-new-ex": openExerciseForm(null, "register"); break;
     case "reg-edit": openExerciseForm(t.dataset.id, "register"); break;
     case "reg-set-cat": exReg().cat = t.dataset.cat; render(); break;
+    case "del-ex-lib": {
+      const id = t.dataset.id;
+      const ex = exById(id);
+      state.confirm = {
+        title: `Delete ${ex.name}?`,
+        body: usageSentence(exerciseUsage(id)),
+        ok: "Delete", danger: true,
+        onOk: () => {
+          state.picker.creating = false;
+          state.picker.editingId = null;
+          deleteExerciseById(id);
+          history.back();   // pop the form, back to the register
+          toast(`Deleted ${ex.name}`);
+        },
+      };
+      render();
+      break;
+    }
     case "close-create": {
       // The exercise form is a sub-state of the picker list when created there
       // (stay on picker); reached from another view (editing) it pops the stack.

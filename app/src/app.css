@@ -1076,6 +1076,9 @@
   /* ---------- Exercise image (form) ---------- */
   .ex-img-edit { display: flex; align-items: center; gap: 12px; }
   .ex-img-preview { width: 84px; height: 84px; border-radius: 12px; object-fit: cover; background: var(--surface-2); border: 1px solid var(--line); }
+  /* Exercise shots are wider than they are tall (a whole body mid-movement), so
+     a square crop hides the movement — go landscape and bigger. */
+  .ex-img-preview.wide { width: 152px; height: 108px; }
 
   /* ---------- Programs / documents ---------- */
   .prog-title { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; margin: 4px 0 2px; }

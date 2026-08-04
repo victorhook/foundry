@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { createExercise, updateExercise } from '$lib/server/db';
+import { createExercise, updateExercise, deleteExercise, exerciseUsage } from '$lib/server/db';
 import { cleanEquipment } from '$lib/equipment';
 import type { RequestHandler } from './$types';
 
@@ -35,4 +35,23 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		return json(updateExercise(String(body.id), input));
 	}
 	return json(createExercise(input));
+};
+
+// Remove a custom exercise and every reference to it (logged entries, template
+// rows, PB goals). The caller gets the counts back so it knows what went.
+export const DELETE: RequestHandler = async ({ locals, request }) => {
+	if (!locals.userId) {
+		throw error(401, 'Not authenticated');
+	}
+	const body = await request.json();
+	const id = String(body.id ?? '');
+	if (!id) {
+		throw error(400, 'id required');
+	}
+	const usage = exerciseUsage(id);
+	if (!deleteExercise(id)) {
+		// Unknown id, or one of the server-seeded cardio movements.
+		throw error(400, 'Exercise cannot be removed');
+	}
+	return json({ ok: true, removed: usage });
 };

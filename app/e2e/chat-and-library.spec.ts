@@ -347,4 +347,16 @@ test('the exercise register creates, filters and edits exercises', async ({ page
 	// It really persisted, and a reload lands back on the register (not home).
 	await page.reload();
 	await expect(page.locator('.ex-pick', { hasText: 'Pendlay Row (barbell)' })).toBeVisible();
+
+	// Delete removes it from the library for good. Never-logged exercises say so
+	// in the confirm, so a harmless delete doesn't read like a scary one.
+	await page.locator('.ex-pick', { hasText: 'Calf Raise' }).click();
+	await page.locator('[data-act="del-ex-lib"]').click();
+	await expect(page.locator('.modal-title')).toHaveText('Delete Calf Raise?');
+	await expect(page.locator('.modal-body')).toContainText('Never logged');
+	await page.locator('[data-act="confirm-ok"]').click();
+	await expect(page.locator('.ex-pick', { hasText: 'Calf Raise' })).toHaveCount(0);
+	await page.reload();
+	await expect(page.locator('.ex-pick', { hasText: 'Calf Raise' })).toHaveCount(0);
+	await expect(page.locator('.ex-pick', { hasText: 'Pendlay Row (barbell)' })).toBeVisible();
 });

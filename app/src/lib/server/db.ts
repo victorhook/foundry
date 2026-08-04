@@ -1684,6 +1684,34 @@ export function getExercise(id: string) {
 	return r ? rowToExercise(r) : null;
 }
 
+// Everything a delete would take with it. Nothing references exercise.id through
+// a real FK, so these are counted (and later cleared) by hand.
+export function exerciseUsage(id: string) {
+	const count = (sql: string) => (db.prepare(sql).get(id) as { n: number }).n;
+	return {
+		workouts: count('SELECT COUNT(DISTINCT workout_id) AS n FROM workout_entry WHERE exercise_id = ?'),
+		templates: count('SELECT COUNT(DISTINCT template_id) AS n FROM template_entry WHERE exercise_id = ?'),
+		goals: count('SELECT COUNT(*) AS n FROM goal WHERE exercise_id = ?')
+	};
+}
+
+// Drop a movement from the library, plus every row pointing at it: logged
+// entries (their sets follow via ON DELETE CASCADE), template rows and PB
+// goals. The workouts themselves stay — a session keeps its date, pain log and
+// notes even if the only entry in it was the exercise being removed.
+// Seeded cardio can't go: the home-screen routines are built on those ids.
+export const deleteExercise = db.transaction((id: string): boolean => {
+	const row = db.prepare('SELECT custom FROM exercise WHERE id = ?').get(id) as { custom: number } | undefined;
+	if (!row || !row.custom) {
+		return false;
+	}
+	db.prepare('DELETE FROM workout_entry WHERE exercise_id = ?').run(id);
+	db.prepare('DELETE FROM template_entry WHERE exercise_id = ?').run(id);
+	db.prepare('DELETE FROM goal WHERE exercise_id = ?').run(id);
+	db.prepare('DELETE FROM exercise WHERE id = ?').run(id);
+	return true;
+});
+
 export function createPainCategory(name: string): string {
 	db.prepare('INSERT OR IGNORE INTO pain_category (name) VALUES (?)').run(name);
 	return name;
