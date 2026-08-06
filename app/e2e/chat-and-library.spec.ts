@@ -192,6 +192,65 @@ test('profile: weigh-in persists across reload, history folds', async ({ page })
 	await expect(page.locator('.wrow-val', { hasText: '80.5 kg' })).toBeVisible();
 });
 
+// The ranged digest: what gets handed to an AI agent. The range is the part
+// worth guarding — a summary that quietly includes older sessions is worse than
+// no summary, because every total in it reads as "this week".
+test('profile: export digest covers the chosen range only', async ({ page }) => {
+	await login(page);
+	const api = page.request;
+	const at = (daysBack: number) => {
+		const d = new Date();
+		d.setDate(d.getDate() - daysBack);
+		d.setHours(18, 12, 0, 0);
+		return d.getTime();
+	};
+	const ex = await (await api.post('/api/exercises', {
+		data: { name: 'Digest Press', muscles: ['Chest'], equipment: ['barbell'] }
+	})).json();
+	await api.post('/api/workouts', {
+		data: {
+			startedAt: at(2), routineName: 'Gym', theme: 'Chest', feel: 7, energy: 4, notes: 'recent one',
+			pains: [{ cat: 'Shoulders', level: 3 }],
+			entries: [{ exerciseId: ex.id, equipment: 'barbell', sets: [{ reps: 8, weight: 60 }, { reps: 6, weight: 65 }] }]
+		}
+	});
+	await api.post('/api/workouts', {
+		data: {
+			startedAt: at(40), routineName: 'Gym', feel: 9, energy: 9, notes: 'ancient one', pains: [],
+			entries: [{ exerciseId: ex.id, sets: [{ reps: 5, weight: 100 }] }]
+		}
+	});
+
+	const week = await api.get('/api/export?weeks=1');
+	expect(week.ok()).toBeTruthy();
+	expect(week.headers()['content-type']).toContain('text/plain');
+	const text = await week.text();
+	expect(text.split('\n')[0]).toBe('FOUNDRY-DIGEST v1');
+	expect(text).toContain('recent one');
+	expect(text).not.toContain('ancient one');
+	expect(text).toContain('8x60,6x65');
+	expect(text).toContain('Shoulders:3');
+
+	// Widen the window and the older session appears too. Other specs in this file
+	// share the database, so assert on these two sessions, not on global totals.
+	const quarter = await (await api.get('/api/export?weeks=12')).text();
+	expect(quarter).toContain('ancient one');
+	const json = await (await api.get('/api/export?weeks=12&format=json')).json();
+	const recent = json.workouts.find((w: any) => w.notes === 'recent one');
+	const ancient = json.workouts.find((w: any) => w.notes === 'ancient one');
+	expect(recent.volumeKg).toBe(870); // 8x60 + 6x65
+	expect(ancient.volumeKg).toBe(500); // 5x100
+	expect(json.summary.sessions).toBeGreaterThanOrEqual(2);
+
+	// A malformed window is refused rather than silently reinterpreted.
+	expect((await api.get('/api/export?from=last-tuesday')).status()).toBe(400);
+
+	// The Profile screen offers it: pick a range, and the links carry it.
+	await menuNav(page, 'Profile');
+	await page.locator('[data-act="export-range"][data-id="12w"]').click();
+	await expect(page.locator('a[download]').first()).toHaveAttribute('href', '/api/export?weeks=12');
+});
+
 // Steps need a live Google Fit account, so the synced data is injected at the
 // /api/data boundary — enough to prove the chart and the fold are wired up.
 test('profile: steps chart and foldable daily history', async ({ page }) => {

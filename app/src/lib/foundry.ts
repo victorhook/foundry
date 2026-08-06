@@ -120,6 +120,9 @@ function load() {
     nutritionDay: draft.nutritionDay || null,
     // Profile: which history lists are unfolded (the charts always show).
     profFold: draft.profFold || { weight: false, steps: false },
+    // Data export: which range the digest covers, and the copy in flight.
+    exportRange: draft.exportRange || "1w",
+    exportBusy: false,
     dayLog: null,
     photoTag: null,
     loaded: false,
@@ -209,6 +212,7 @@ function save() {
       albumId: state.albumId,
       nutritionDay: state.nutritionDay,
       profFold: state.profFold,
+      exportRange: state.exportRange,
     }));
   } catch (e) { /* storage full / unavailable */ }
 }
@@ -2349,6 +2353,51 @@ function fitSection() {
     ${rows && open ? `<div class="wlist">${rows}</div>` : ""}`;
 }
 
+/* ---- Data export (a digest to hand to an AI agent) ---- */
+const EXPORT_RANGES = [
+  { id: "1w", label: "Week", weeks: 1 },
+  { id: "4w", label: "4 weeks", weeks: 4 },
+  { id: "12w", label: "12 weeks", weeks: 12 },
+  { id: "all", label: "All", weeks: null },
+];
+function exportRange() {
+  return EXPORT_RANGES.find((r) => r.id === state.exportRange) || EXPORT_RANGES[0];
+}
+function exportUrl(format) {
+  const r = exportRange();
+  const range = r.weeks ? `weeks=${r.weeks}` : "from=2000-01-01";
+  return `/api/export?${range}${format === "json" ? "&format=json" : ""}`;
+}
+// Copy beats download for the main use: the digest goes straight into a chat.
+async function copyExport() {
+  if (state.exportBusy) { return; }
+  state.exportBusy = true; render();
+  try {
+    const r = await fetch(exportUrl("txt"));
+    if (!r.ok) { throw new Error("export " + r.status); }
+    const text = await r.text();
+    await navigator.clipboard.writeText(text);
+    toast(`Copied ${Math.round(text.length / 1024)} KB — paste into any AI chat`);
+  } catch (e) {
+    toast("Couldn't copy — use Download");
+  }
+  state.exportBusy = false; render();
+}
+
+function exportSection() {
+  const chips = EXPORT_RANGES.map((r) =>
+    `<button class="chip ${exportRange().id === r.id ? "active" : ""}" data-act="export-range" data-id="${r.id}">${r.label}</button>`
+  ).join("");
+  return `<div class="section-head" style="margin-top:8px;"><span class="eyebrow">Data export</span></div>
+    <div class="form-hint">Everything logged in the range — sessions, sets, pain, steps, weight, food, notes — as one compact file an AI agent can read.</div>
+    <div class="chip-row" style="margin-bottom:12px;">${chips}</div>
+    <div class="weigh-add">
+      <button class="chip" data-act="export-copy" ${state.exportBusy ? "disabled" : ""}>${state.exportBusy ? "Copying…" : "Copy for AI"}</button>
+      <a class="chip" href="${exportUrl("txt")}" download>Download .txt</a>
+      <a class="chip" href="${exportUrl("json")}" download>.json</a>
+    </div>`;
+}
+
 function viewProfile() {
   const p = state.profile;
   const age = ageFrom(p.dob);
@@ -2417,6 +2466,8 @@ function viewProfile() {
         <span class="eyebrow">Gender</span>
         <div class="chip-row">${genderChips}</div>
       </div>
+
+      ${exportSection()}
     </main>
   </div>`;
 }
@@ -5239,6 +5290,8 @@ app.addEventListener("click", (e) => {
     case "del-weigh": deleteWeighIn(parseInt(t.dataset.id, 10)); break;
     case "fold-weight": toggleFold("weight"); break;
     case "fold-steps": toggleFold("steps"); break;
+    case "export-range": state.exportRange = t.dataset.id; save(); render(); break;
+    case "export-copy": copyExport(); break;
     case "new-album": state.newAlbumOpen = true; render(); break;
     case "new-album-add": {
       const nm = (state.newAlbumName || "").trim();

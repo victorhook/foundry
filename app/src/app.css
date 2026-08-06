@@ -602,6 +602,8 @@
     color: var(--muted); font-size: 0.85rem; font-weight: 600;
   }
   .chip.active { background: var(--accent); color: #1a0f08; border-color: var(--accent); }
+  a.chip { text-decoration: none; display: inline-block; }
+  .chip:disabled { opacity: 0.55; }
 
   .ex-pick {
     width: 100%; display: flex; align-items: center; gap: 12px;

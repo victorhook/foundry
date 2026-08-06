@@ -1415,6 +1415,24 @@ export function getFoodLog(day: string) {
 		}));
 }
 
+// The diary over a span of days, grouped by day; days with nothing logged are
+// absent. One query, so a wide export doesn't turn into a day-by-day walk.
+export function getFoodLogRange(from: string, to: string): Record<string, any[]> {
+	const rows = db
+		.prepare(
+			'SELECT id, day, slot, ord, food_id, grams, qty, name, kcal, protein, carbs, fat FROM food_log WHERE day >= ? AND day <= ? ORDER BY day, slot, ord, created_at'
+		)
+		.all(from, to) as any[];
+	const byDay: Record<string, any[]> = {};
+	for (const r of rows) {
+		(byDay[r.day] ||= []).push({
+			id: r.id, day: r.day, slot: r.slot, foodId: r.food_id, grams: r.grams, qty: r.qty,
+			name: r.name, kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat
+		});
+	}
+	return byDay;
+}
+
 // Insert one or more entries into a day/slot. Returns the day's full log.
 export const addFoodLog = db.transaction((day: string, slot: string, entries: any[]) => {
 	const row = db.prepare('SELECT COALESCE(MAX(ord), -1) AS m FROM food_log WHERE day = ? AND slot = ?').get(day, slot) as any;
